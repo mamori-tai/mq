@@ -1,50 +1,62 @@
 import asyncio
 import pickle
+import typing
 import uuid
+from asyncio import CancelledError
 from typing import Callable, Any, Coroutine
 
 import pymongo
 from loguru import logger
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
+from pymongo.errors import CollectionInvalid
 
 from mq._job import Job
+from mq.utils import MongoDBConnectionParameters, wait_for_event_cleared, dumps
+
+if typing.TYPE_CHECKING:
+    from mq.mq import P
 
 
-class InsertJobResult:
-    def __init__(self, job_id, job_queue, manager):
+class JobCommand:
+    def __init__(self, job_id: str, job_queue: 'JobQueue', shared_memory: 'P'):
         self._job_id = job_id
         self._job_queue = job_queue
-        self._manager = manager
-        self._manager.result_event_by_job_id[
-            self._job_id
-        ] = self._manager._manager.Event()
-        self._manager.cancel_event_by_job_id[
-            self._job_id
-        ] = self._manager._manager.Event()
+        self._shared_memory = shared_memory
+        self._init_events()
 
         self._result = None
         self._tasks = set()
+
+    def _init_events(self):
+        self._shared_memory.init_events_for_job_id(self._job_id)
 
     @property
     def job_id(self):
         return self._job_id
 
-    async def cancel(self):
-        event = self._manager.cancel_event_by_job_id.get(self._job_id)
-        if event is None:
+    async def job(self):
+        return await self._job_queue._q.find_one({"_id": self._job_id})
+
+    async def cancel(self) -> bool:
+        """
+        Returns:
+
+        """
+        ev = self._shared_memory.cancel_event_by_job_id.get(self._job_id)
+        if ev is None:
             raise ValueError("Could not find event")
-        event.set()
-        await asyncio.to_thread(event.set)
-        logger.debug("Job {} cancelled !")
+
+        ev.set()
+        return await wait_for_event_cleared(ev)
 
     async def wait_for_result(self):
-        event = self._manager.result_event_by_job_id.get(self._job_id)
+        event = self._shared_memory.result_event_by_job_id.get(self._job_id)
         if event is None:
             raise ValueError("Could not find event")
 
         await asyncio.to_thread(event.wait)
 
-        refreshed_job = await self._job_queue.q.find_one({"_id": self._job_id})
+        refreshed_job = await self.job()
 
         assert refreshed_job is not None, "Job not found !"
         if (result := refreshed_job.get("result")) is None:
@@ -54,7 +66,10 @@ class InsertJobResult:
 
     def _done_cb(self, task, cb):
         self._tasks.discard(task)
-        return cb(task.result())
+        try:
+            return cb(task.result())
+        except CancelledError:
+            return cb(None)
 
     def add_done_callback(self, cb: Callable | Coroutine):
         task = asyncio.get_event_loop().create_task(self.wait_for_result())
@@ -65,47 +80,52 @@ class JobQueue:
     def __init__(
         self,
         *,
-        mongo_uri: str,
-        db_name: str = "admin",
-        queue_name: str = "job_queue",
-        manager=None,
+        mongodb_connection: MongoDBConnectionParameters,
+        shared_memory: "P" = None,
     ):
-        self._mongo_uri = mongo_uri
-        self._db_name = db_name
-        self._db = AsyncIOMotorClient(mongo_uri)[db_name]
-        self._queue_name = queue_name
-        self.q = None
-        self._manager = manager
+        self._mongodb_connection = mongodb_connection
+        self._client = AsyncIOMotorClient(mongodb_connection.mongo_uri)
+        self._db = self._client[mongodb_connection.db_name]
+        self._q: AsyncIOMotorCollection = None
+        self._shared_memory = shared_memory
 
-    async def _init(self):
+    async def init(self):
         if not await self._exists():
             await self._create()
-        self.q = self._db[self._queue_name]
+        self._q = self._db[self.connection_parameters.collection]
+
+    @property
+    def connection_parameters(self):
+        return self._mongodb_connection
 
     async def _create(self):
+        collection = self.connection_parameters.collection
         try:
-            logger.info(f"creating queue collection {self._queue_name=}")
-            await self._db.create_collection(self._queue_name)
-            logger.info(
-                f"creating index on queue collection {self._queue_name=} on field 'status'"
-            )
-            await self._db[self._queue_name].create_index(
-                [("status", pymongo.ASCENDING)]
-            )
-        except Exception as e:  # pymongo.errors.CollectionInvalid as e:
-            raise ValueError(f"Collection {self._queue_name=} already created") from e
+            logger.info(f"creating queue on {collection=}")
+            await self._db.create_collection(collection)
+            logger.info(f"creating index on queue {collection=} on field 'status'")
+            await self._db[collection].create_index([("status", pymongo.ASCENDING)])
+        except CollectionInvalid as e:
+            raise ValueError(f"Collection {collection=} already created") from e
 
     async def _exists(self):
-        return self._queue_name in await self._db.list_collection_names()
+        return (
+            self.connection_parameters.collection
+            in await self._db.list_collection_names()
+        )
 
     async def enqueue(
-        self, f: Callable[..., Any] | Coroutine, *args: Any, **kwargs: Any
-    ) -> InsertJobResult:
-        assert self.q is not None
+        self, f: Callable[..., Any] | Coroutine | None, *args: Any, **kwargs: Any
+    ) -> JobCommand:
+        assert self._q is not None
         job_id = str(uuid.uuid4())
-        job = Job(id=job_id, f=pickle.dumps((f, args, kwargs)))
-        await self.q.insert_one(job.dict(by_alias=True))
-        return InsertJobResult(job_id=job_id, job_queue=self, manager=self._manager)
+        payload = kwargs.pop("payload", None)
+        data = dict(f=dumps((f, args, kwargs))) if f is not None else dict(payload=payload)
+        logger.debug(data)
+        job = Job(id=job_id, **data)
+        job_command = JobCommand(
+            job_id=job_id, job_queue=self, shared_memory=self._shared_memory
+        )
+        await self._q.insert_one(job.dict(by_alias=True))
+        return job_command
 
-    async def update_status(self, job_id, status):
-        await self.q.find_one_and_update({"_id": job_id}, status)
