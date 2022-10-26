@@ -104,7 +104,9 @@ class MQ:
 
     runner_cls: Callable[[...], RunnerProtocol] = Runner
     scheduler_cls: Callable[[...], SchedulerProtocol] = DefaultScheduler
-    task_runner_by_channel: dict[str, Callable[[...], TaskRunnerProtocol] | Callable[[Job], Any]] = {}
+    task_runner_by_channel: dict[
+        str, Callable[[...], TaskRunnerProtocol] | Callable[[Job], Any]
+    ] = {}
 
     def with_process_connection(self, mq_server_params: MQManagerConnectionParameters):
         self.mq_server_params = mq_server_params
@@ -166,7 +168,7 @@ class MQ:
             all_events=self.shared_memory.all_events(),
             runner_cls=self.runner_cls,
             scheduler_cls=self.scheduler_cls,
-            task_runner=self.task_runner_by_channel.get(channel)
+            task_runner=self.task_runner_by_channel.get(channel),
         )
         worker.init_cancel_event(self.shared_memory.event())
         self.register_worker(worker)
@@ -187,7 +189,7 @@ class MQ:
             mq_manager_parameters=self.mq_server_params,
             runner_cls=self.runner_cls,
             scheduler_cls=self.scheduler_cls,
-            task_runner=self.task_runner_by_channel.get(channel)
+            task_runner=self.task_runner_by_channel.get(channel),
         )
         worker.connect()
         self.register_worker(worker)
@@ -238,7 +240,9 @@ class job:
 def nope(fn):
     def _():
         return fn
+
     return _
+
 
 class register_task_runner:
     def __init__(self, *, channel: str):

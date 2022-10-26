@@ -24,7 +24,6 @@ class Job(BaseModel):
     f: bson.Binary | None
     payload: dict[str, Any] | None
 
-
     status: JobStatus = JobStatus.WAITING
 
     enqueued_at: datetime.datetime = datetime.datetime.now()

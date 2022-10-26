@@ -37,7 +37,9 @@ class Runner:
     default_scheduler_cls = DefaultScheduler
     serializer = utils.dumps
     deserializer = pickle.loads
-    task_runner_cls: TaskRunnerProtocol | typing.Callable[[Job], typing.Any] = DefaultTaskRunner
+    task_runner_cls: TaskRunnerProtocol | typing.Callable[
+        [Job], typing.Any
+    ] = DefaultTaskRunner
 
     def __init__(
         self,
@@ -63,7 +65,9 @@ class Runner:
     def close(self):
         self._client.close()
 
-    async def _check_coroutine_function(self, f: typing.Callable[..., typing.Any], *args, **kwargs):
+    async def _check_coroutine_function(
+        self, f: typing.Callable[..., typing.Any], *args, **kwargs
+    ):
         if not asyncio.iscoroutinefunction(f):
             await asyncio.to_thread(f, *args, **kwargs)
         return await f(*args, **kwargs)
@@ -72,7 +76,8 @@ class Runner:
         async with self._semaphore:
             logger.debug("Running job {}", current_job.id)
             await self._q.find_one_and_update(
-                {"_id": current_job.id}, {"$set": {"started_at": datetime.datetime.utcnow()}}
+                {"_id": current_job.id},
+                {"$set": {"started_at": datetime.datetime.utcnow()}},
             )
             try:
                 # if f is defined fallback to default task runner
@@ -91,9 +96,9 @@ class Runner:
                     {
                         "$set": {
                             "status": JobStatus.CANCELLED,
-                            "last_run": datetime.datetime.utcnow()
+                            "last_run": datetime.datetime.utcnow(),
                         }
-                    }
+                    },
                 )
                 # clearing
                 event = self._all_events.get("cancel_event_by_job_id").get(
@@ -108,9 +113,9 @@ class Runner:
                     {
                         "$set": {
                             "status": JobStatus.ON_ERROR,
-                            "last_run": datetime.datetime.utcnow()
+                            "last_run": datetime.datetime.utcnow(),
                         }
-                    }
+                    },
                 )
                 raise
             else:
@@ -120,7 +125,7 @@ class Runner:
                         "$set": {
                             "status": JobStatus.FINISHED,
                             "result": self.serializer(result),
-                            "last_run": datetime.datetime.utcnow()
+                            "last_run": datetime.datetime.utcnow(),
                         }
                     },
                 )
@@ -139,7 +144,7 @@ class Runner:
         def _task_cb(t):
             result_event.set()
             if not t.cancelled():
-                if (exc := t.exception()):
+                if exc := t.exception():
                     raise exc
                 cancel_task.cancel()
 
@@ -170,7 +175,12 @@ class Runner:
                 # updating directly avoid resending a new job
                 await self._q.find_one_and_update(
                     {"_id": current_job.id},
-                    {"$set": {"status": JobStatus.PENDING, "locked_by": self._worker_id}}
+                    {
+                        "$set": {
+                            "status": JobStatus.PENDING,
+                            "locked_by": self._worker_id,
+                        }
+                    },
                 )
                 task = asyncio.create_task(self._task_for_job(current_job))
                 task.add_done_callback(tasks.discard)

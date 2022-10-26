@@ -30,9 +30,9 @@ class TaskRunner:
         self.b = b
 
     async def run(self, current_job):
-        #if current_job.f is None:
-         #   logger.debug("None value... returning")
-         #   return
+        # if current_job.f is None:
+        #   logger.debug("None value... returning")
+        #   return
         logger.debug("HELLO")
         payload = current_job.payload
         x = payload["a"] / payload["b"]
@@ -43,9 +43,10 @@ class TaskRunner:
         #        print(await resp.text())
 
 
-#@register_task_runner(channel="default")
+# @register_task_runner(channel="default")
 def my_worker_function(current_job):
     logger.debug(current_job.payload)
+
 
 if __name__ == "__main__":
 
@@ -69,7 +70,7 @@ if __name__ == "__main__":
         assert mq.initialized is True
         worker = (
             await mq.worker_for(channel="default")
-            .with_task_runner(TaskRunner(1,0))
+            .with_task_runner(TaskRunner(1, 0))
             .start()
         )  # .max_concurrency(3).every(3).seconds.start()
         # await worker.scale_up(2)
