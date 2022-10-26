@@ -22,7 +22,7 @@ class MongoDBConnectionParameters:
 
 @dataclasses.dataclass
 class MQManagerConnectionParameters:
-    url: str = ''
+    url: str = ""
     port: int = 50000
     authkey: bytes = b"abracadabra"
 
@@ -56,6 +56,7 @@ async def wait_for_event_cleared(ev: multiprocessing.Event, timeout: float = 0.5
     Returns:
 
     """
+
     def _check_ev():
         while 1:
             event_is_not_set = not ev.is_set()

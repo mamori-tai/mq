@@ -3,7 +3,7 @@ from typing import Protocol
 from motor.motor_asyncio import AsyncIOMotorCollection
 
 
-class Scheduler(Protocol):
+class SchedulerProtocol(Protocol):
     q: AsyncIOMotorCollection
 
     async def save_last_execution(self, job):

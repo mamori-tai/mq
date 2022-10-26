@@ -20,8 +20,10 @@ class Job(BaseModel):
         arbitrary_types_allowed = True
 
     id: str = Field("", alias="_id")
+    locked_by: str | None
     f: bson.Binary | None
     payload: dict[str, Any] | None
+
 
     status: JobStatus = JobStatus.WAITING
 

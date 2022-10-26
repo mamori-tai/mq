@@ -18,7 +18,7 @@ if typing.TYPE_CHECKING:
 
 
 class JobCommand:
-    def __init__(self, job_id: str, job_queue: 'JobQueue', shared_memory: 'P'):
+    def __init__(self, job_id: str, job_queue: "JobQueue", shared_memory: "P"):
         self._job_id = job_id
         self._job_queue = job_queue
         self._shared_memory = shared_memory
@@ -120,7 +120,9 @@ class JobQueue:
         assert self._q is not None
         job_id = str(uuid.uuid4())
         payload = kwargs.pop("payload", None)
-        data = dict(f=dumps((f, args, kwargs))) if f is not None else dict(payload=payload)
+        data = (
+            dict(f=dumps((f, args, kwargs))) if f is not None else dict(payload=payload)
+        )
         logger.debug(data)
         job = Job(id=job_id, **data)
         job_command = JobCommand(
@@ -128,4 +130,3 @@ class JobQueue:
         )
         await self._q.insert_one(job.dict(by_alias=True))
         return job_command
-

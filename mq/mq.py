@@ -1,14 +1,18 @@
 import asyncio
 import functools
 import threading
+import weakref
 from multiprocessing import Manager, current_process
 from multiprocessing.managers import SyncManager
+from typing import Callable, Any
 
 import schedule
 from loguru import logger
 
+from mq._job import Job
 from mq._queue import JobQueue, JobCommand
-from mq._scheduler import Scheduler, DefaultScheduler
+from mq._runner import TaskRunnerProtocol, Runner, RunnerProtocol
+from mq._scheduler import SchedulerProtocol, DefaultScheduler
 from mq._worker import Worker
 from mq.utils import MongoDBConnectionParameters, MQManagerConnectionParameters
 
@@ -70,11 +74,17 @@ def init_cancel_event_for_worker_id(events_by_job_id, ev, worker_id: str):
     events_by_job_id["cancel_event_by_job_id"][worker_id] = ev
 
 
-def start_mq_manager_server(address, authkey, events_by_job_id, close_manager_event, ev_creator):
-    MQManager.register("events_by_job_id", functools.partial(get_events_by_job_id, events_by_job_id))
+def start_mq_manager_server(
+    address, authkey, events_by_job_id, close_manager_event, ev_creator
+):
+    MQManager.register(
+        "events_by_job_id", functools.partial(get_events_by_job_id, events_by_job_id)
+    )
     MQManager.register(
         "init_cancel_event_for_worker_id",
-        functools.partial(init_cancel_event_for_worker_id, events_by_job_id, ev_creator())
+        functools.partial(
+            init_cancel_event_for_worker_id, events_by_job_id, ev_creator()
+        ),
     )
     manager = MQManager(address=address, authkey=authkey)
     manager.start()
@@ -88,10 +98,13 @@ class MQ:
     job_queue: JobQueue | None = None
     shared_memory: P | None = None
     initialized: bool = False
-    scheduler_cls: Scheduler = DefaultScheduler()
-    workers: dict[str, Worker] = {}
+    workers: weakref.WeakValueDictionary[str, Worker] = {}
     server_activated: bool = False
     mq_server_params: MQManagerConnectionParameters | None = None
+
+    runner_cls: Callable[[...], RunnerProtocol] = Runner
+    scheduler_cls: Callable[[...], SchedulerProtocol] = DefaultScheduler
+    task_runner_by_channel: dict[str, Callable[[...], TaskRunnerProtocol] | Callable[[Job], Any]] = {}
 
     def with_process_connection(self, mq_server_params: MQManagerConnectionParameters):
         self.mq_server_params = mq_server_params
@@ -101,16 +114,20 @@ class MQ:
     def _start_server(self):
         asyncio.create_task(
             asyncio.to_thread(
-            start_mq_manager_server,
-            (self.mq_server_params.url, self.mq_server_params.port),
-            self.mq_server_params.authkey,
-            self.shared_memory._events_by_job_id,
-            self.shared_memory._close_manager_event,
-            self.shared_memory._manager.Event
+                start_mq_manager_server,
+                (self.mq_server_params.url, self.mq_server_params.port),
+                self.mq_server_params.authkey,
+                self.shared_memory._events_by_job_id,
+                self.shared_memory._close_manager_event,
+                self.shared_memory._manager.Event,
             )
         )
 
-    async def init(self, mongodb_connection: MongoDBConnectionParameters, start_server: bool = False):
+    async def init(
+        self,
+        mongodb_connection: MongoDBConnectionParameters,
+        start_server: bool = False,
+    ):
         self.shared_memory = P()
 
         if start_server:
@@ -128,7 +145,7 @@ class MQ:
         logger.debug("MQ instance parametrized")
         return self
 
-    async def enqueue(self, f = None, *args, **kwargs):
+    async def enqueue(self, f=None, *args, **kwargs):
         """
         direct enqueuing
         Args:
@@ -147,19 +164,32 @@ class MQ:
             self.job_queue.connection_parameters,
             channel=channel,
             all_events=self.shared_memory.all_events(),
+            runner_cls=self.runner_cls,
+            scheduler_cls=self.scheduler_cls,
+            task_runner=self.task_runner_by_channel.get(channel)
         )
-        worker._init_cancel_event(self.shared_memory.event())
+        worker.init_cancel_event(self.shared_memory.event())
         self.register_worker(worker)
         return worker
 
-    def distant_worker(self, *, channel: str):
+    def distant_worker(
+        self,
+        *,
+        channel: str = "default",
+    ):
         logger.debug("launching worker for {}", channel)
-        assert self.mq_server_params is not None, "Can not connect to distant manager server..."
+        assert (
+            self.mq_server_params is not None
+        ), "Can not connect to distant manager server..."
         worker = Worker(
             self.job_queue.connection_parameters,
             channel=channel,
             mq_manager_parameters=self.mq_server_params,
+            runner_cls=self.runner_cls,
+            scheduler_cls=self.scheduler_cls,
+            task_runner=self.task_runner_by_channel.get(channel)
         )
+        worker.connect()
         self.register_worker(worker)
         return worker
 
@@ -202,6 +232,20 @@ class job:
                 raise
 
         fn.mq = _
+        return fn
+
+
+def nope(fn):
+    def _():
+        return fn
+    return _
+
+class register_task_runner:
+    def __init__(self, *, channel: str):
+        self._channel = channel
+
+    def __call__(self, fn):
+        mq.task_runner_by_channel[self._channel] = fn
         return fn
 
 
