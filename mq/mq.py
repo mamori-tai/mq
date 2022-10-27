@@ -4,7 +4,7 @@ import threading
 import weakref
 from multiprocessing import Manager, current_process
 from multiprocessing.managers import SyncManager
-from typing import Callable, Any
+from typing import Callable, Any, Type
 
 import schedule
 from loguru import logger
@@ -12,7 +12,6 @@ from loguru import logger
 from mq._job import Job
 from mq._queue import JobQueue, JobCommand
 from mq._runner import TaskRunnerProtocol, Runner, RunnerProtocol
-from mq._scheduler import SchedulerProtocol, DefaultScheduler
 from mq._worker import Worker
 from mq.utils import MongoDBConnectionParameters, MQManagerConnectionParameters
 
@@ -102,11 +101,8 @@ class MQ:
     server_activated: bool = False
     mq_server_params: MQManagerConnectionParameters | None = None
 
-    runner_cls: Callable[[...], RunnerProtocol] = Runner
-    scheduler_cls: Callable[[...], SchedulerProtocol] = DefaultScheduler
-    task_runner_by_channel: dict[
-        str, Callable[[...], TaskRunnerProtocol] | Callable[[Job], Any]
-    ] = {}
+    runner_cls: Type[RunnerProtocol] = Runner
+    task_runner_by_channel: dict[str, TaskRunnerProtocol | Callable[[Job], Any]] = {}
 
     def with_process_connection(self, mq_server_params: MQManagerConnectionParameters):
         self.mq_server_params = mq_server_params
@@ -167,7 +163,6 @@ class MQ:
             channel=channel,
             all_events=self.shared_memory.all_events(),
             runner_cls=self.runner_cls,
-            scheduler_cls=self.scheduler_cls,
             task_runner=self.task_runner_by_channel.get(channel),
         )
         worker.init_cancel_event(self.shared_memory.event())
@@ -188,7 +183,6 @@ class MQ:
             channel=channel,
             mq_manager_parameters=self.mq_server_params,
             runner_cls=self.runner_cls,
-            scheduler_cls=self.scheduler_cls,
             task_runner=self.task_runner_by_channel.get(channel),
         )
         worker.connect()

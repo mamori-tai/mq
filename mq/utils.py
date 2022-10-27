@@ -3,7 +3,6 @@ import contextlib
 import dataclasses
 import multiprocessing
 import pickle
-import time
 from functools import partial
 from typing import Type
 
@@ -57,22 +56,19 @@ async def wait_for_event_cleared(ev: multiprocessing.Event, timeout: float = 0.5
 
     """
 
-    def _check_ev():
+    async def _check_ev():
         while 1:
             event_is_not_set = not ev.is_set()
             if event_is_not_set:
                 return True
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
 
-    async def _wait():
-        await asyncio.sleep(timeout)
-
-    t = asyncio.create_task(asyncio.to_thread(_check_ev))
-    w = asyncio.create_task(_wait())
-    done, pending = await asyncio.wait({t, w}, return_when=asyncio.FIRST_COMPLETED)
-    for _t in pending:
-        _t.cancel()
-    return t in done
+    try:
+        async with async_timeout.timeout(timeout):
+            await asyncio.ensure_future(_check_ev())
+        return True
+    except asyncio.TimeoutError:
+        return False
 
 
 @contextlib.contextmanager

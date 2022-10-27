@@ -42,6 +42,9 @@ class JobCommand:
         Returns:
 
         """
+        #job = await self.job()
+        #if job["status"] == "finished":
+        #    return False
         ev = self._shared_memory.cancel_event_by_job_id.get(self._job_id)
         if ev is None:
             raise ValueError("Could not find event")

@@ -35,6 +35,7 @@ class RunnerProtocol(typing.Protocol):
 
 class Runner:
     default_scheduler_cls = DefaultScheduler
+    scheduler_cls = None
     serializer = utils.dumps
     deserializer = pickle.loads
     task_runner_cls: TaskRunnerProtocol | typing.Callable[
@@ -43,7 +44,6 @@ class Runner:
 
     def __init__(
         self,
-        scheduler_cls,
         task_runner: TaskRunnerProtocol | typing.Callable[[Job], typing.Any] | None,
         worker_id: str,
         mongo_uri: str,
@@ -53,10 +53,11 @@ class Runner:
         stop_process_event,
     ):
         self._worker_id = worker_id
-        self._scheduler = scheduler_cls() or self.default_scheduler_cls()
+        self._scheduler = (self.scheduler_cls or self.default_scheduler_cls)()
 
         self._client = AsyncIOMotorClient(mongo_uri)
         self._q = self._client[db_name][collection]
+        self._worker_queue = self._client[db_name]["mq_workers"]
         self._all_events = all_events
         self._task_runner = task_runner
         self._stop_process_event = stop_process_event
@@ -71,6 +72,18 @@ class Runner:
         if not asyncio.iscoroutinefunction(f):
             await asyncio.to_thread(f, *args, **kwargs)
         return await f(*args, **kwargs)
+
+    async def set_job_status(self, job_id: str, status: JobStatus, result=None):
+        await self._q.find_one_and_update(
+            {"_id": job_id},
+            {
+                "$set": {
+                    "status": status,
+                    "last_run_at": datetime.datetime.utcnow(),
+                    "result": result,
+                }
+            },
+        )
 
     async def _run_task(self, current_job: Job) -> None:
         async with self._semaphore:
@@ -91,15 +104,7 @@ class Runner:
                 result = await self._check_coroutine_function(f, current_job)
             except CancelledError:
                 logger.debug("task cancelled {} !", current_job.id)
-                await self._q.find_one_and_update(
-                    {"_id": current_job.id},
-                    {
-                        "$set": {
-                            "status": JobStatus.CANCELLED,
-                            "last_run": datetime.datetime.utcnow(),
-                        }
-                    },
-                )
+                await self.set_job_status(current_job.id, JobStatus.CANCELLED)
                 # clearing
                 event = self._all_events.get("cancel_event_by_job_id").get(
                     current_job.id
@@ -108,26 +113,15 @@ class Runner:
                 raise
             except Exception as e:
                 logger.exception(e)
-                await self._q.find_one_and_update(
-                    {"_id": current_job.id},
-                    {
-                        "$set": {
-                            "status": JobStatus.ON_ERROR,
-                            "last_run": datetime.datetime.utcnow(),
-                        }
-                    },
-                )
+                await self.set_job_status(current_job.id, JobStatus.ON_ERROR)
                 raise
             else:
-                await self._q.find_one_and_update(
-                    {"_id": current_job.id},
-                    {
-                        "$set": {
-                            "status": JobStatus.FINISHED,
-                            "result": self.serializer(result),
-                            "last_run": datetime.datetime.utcnow(),
-                        }
-                    },
+                await self.set_job_status(
+                    current_job.id, JobStatus.FINISHED, result=self.serializer(result)
+                )
+            finally:
+                self._worker_queue.find_one_and_update(
+                    dict(worker_id=self._worker_id), {"$inc": {"nb_tasks": 1}}
                 )
             await asyncio.sleep(3)
 
@@ -165,7 +159,7 @@ class Runner:
                 self.close()
                 logger.debug("clearing ")
                 self._stop_process_event.clear()
-                return
+                break
             cursor: AsyncIOMotorCursor = self._q.find({"status": JobStatus.WAITING})
             try:
                 job_as_dict = await cursor.next()
@@ -192,3 +186,4 @@ class Runner:
                 raise e
             except Exception as e:
                 logger.exception(e)
+                raise e

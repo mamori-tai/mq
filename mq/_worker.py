@@ -1,59 +1,47 @@
 import asyncio
 import datetime
 import multiprocessing
+import signal
 import typing
 import uuid
 from enum import IntEnum
 from functools import partial
 from multiprocessing.managers import SyncManager
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from loguru import logger
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from mq._job import Job
-from mq._runner import Runner, TaskRunnerProtocol, RunnerProtocol
-from mq._scheduler import SchedulerProtocol
+from mq._runner import TaskRunnerProtocol, RunnerProtocol
 from mq.utils import (
-    _cancel_all_tasks,
     wait_for_event_cleared,
     MongoDBConnectionParameters,
     MQManagerConnectionParameters,
 )
 
-if TYPE_CHECKING:
-    from mq.mq import MQ
-
 
 def syncify(coroutine_function, *args, **kwargs):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    """
 
-    def reraise(task_):
-        if task_.cancelled():
-            task_.exception()
-        exc = task_.exception()
-        if exc:
-            raise exc
+    Args:
+        coroutine_function:
+        *args:
+        **kwargs:
 
-    try:
-        task = loop.create_task(coroutine_function(*args, **kwargs))
-        task.add_done_callback(reraise)
-        loop.run_until_complete(task)
-        _cancel_all_tasks(loop)
-    except Exception as e:
-        logger.exception(e)
-        raise e
+    Returns:
+
+    """
+    asyncio.run(coroutine_function(*args, **kwargs))
 
 
 def build_runner(
-    runner_cls: typing.Callable[[...], RunnerProtocol],
-    scheduler_cls: typing.Callable[[...], SchedulerProtocol],
+    runner_cls: typing.Type[RunnerProtocol],
     task_runner: TaskRunnerProtocol | typing.Callable[[Job], Any],
     *args,
     **kwargs,
 ):
-    runner = runner_cls(scheduler_cls, task_runner, *args, **kwargs)
+    runner = runner_cls(task_runner, *args, **kwargs)
     return runner.dequeue()
 
 
@@ -77,8 +65,7 @@ class Worker:
         all_events: dict[str, dict[str, Any]] = None,
         mq_manager_parameters: MQManagerConnectionParameters | None = None,
         task_runner: TaskRunnerProtocol | typing.Callable[[Job], Any] = None,
-        runner_cls: typing.Callable[[...], RunnerProtocol],
-        scheduler_cls: typing.Callable[[...], SchedulerProtocol],
+        runner_cls: typing.Type[RunnerProtocol],
     ):
 
         self._worker_id = str(uuid.uuid4())
@@ -96,10 +83,10 @@ class Worker:
         self._process_pool = multiprocessing.Pool(processes=self._nb_process)
 
         self._all_events = all_events
+        self._tasks = set()
 
         # customizing classes
         self._runner_cls = runner_cls
-        self._scheduler_cls = scheduler_cls
         self._task_runner = task_runner
 
     def connect(self):
@@ -123,7 +110,8 @@ class Worker:
 
     def init_cancel_event(self, event):
         """
-
+        init cancel event in local environment i.e. workers
+        are direct children of the main process
         Args:
             event:
 
@@ -139,8 +127,8 @@ class Worker:
         if self._task_runner is not None:
             raise ValueError(
                 f"task runner already set to {self._task_runner}."
-                f"May be inherited from registered_task runner."
-                f"Please check your task runner registration."
+                f" May be inherited from registered_task runner."
+                f" Please check your task runner registration."
             )
         self._task_runner = task_runner
         return self
@@ -151,7 +139,7 @@ class Worker:
                 worker_id=self._worker_id,
                 running=WorkerStatus.RUNNING,
                 nb_tasks=0,
-                started_at=datetime.datetime.utcnow(),
+               started_at=datetime.datetime.utcnow(),
                 ended_at=None,
             )
         )
@@ -163,7 +151,6 @@ class Worker:
                 partial(
                     build_runner,
                     self._runner_cls,
-                    self._scheduler_cls,
                     self._task_runner,
                     self._worker_id,
                     connection_parameters.mongo_uri,
@@ -176,8 +163,20 @@ class Worker:
         )
         # closing directly
         self._process_pool.close()
-        # start a dummy thread to join
-        asyncio.get_event_loop().run_in_executor(None, self._process_pool.join)
+
+        # join in a thread
+        asyncio.get_running_loop().run_in_executor(None, self._process_pool.join)
+
+        def cancel_task():
+            cancel = asyncio.ensure_future(self.terminate())
+            cancel.add_done_callback(self._tasks.discard)
+            self._tasks.add(cancel)
+
+        asyncio.get_event_loop().add_signal_handler(
+            signal.SIGINT,
+            cancel_task
+        )
+
         return self
 
     async def terminate(self):
@@ -190,8 +189,9 @@ class Worker:
                     "running": WorkerStatus.TERMINATED,
                     "ended_at": datetime.datetime.utcnow(),
                 }
-            },
+        },
         )
+        self._client.close()
         self._process_pool.terminate()
 
     async def scale_up(self, up: int):

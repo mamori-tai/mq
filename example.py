@@ -67,6 +67,7 @@ if __name__ == "__main__":
             # start_server=True
         )
         await mq.job_queue._db.mq.drop()
+        await mq.job_queue._db.mq_workers.drop()
         assert mq.initialized is True
         worker = (
             await mq.worker_for(channel="default")
@@ -84,19 +85,22 @@ if __name__ == "__main__":
             # job_result.add_done_callback(lambda x: logger.debug('Second cb {}', x + 123))
 
             job_result_2 = await job_test.mq(r1, r2)
-            await mq.enqueue(payload=dict(a=1, b=0))
+            job_result = await mq.enqueue(payload=dict(a=1, b=1))
 
+            logger.debug("result {}", await job_result.wait_for_result())
+            #job_result.add_done_callback(lambda _: logger.debug("Coucou"))
             # await asyncio.sleep(2)
 
-            # cancelled = await job_result_2.cancel()
-            # logger.debug("Cancelled: {}", cancelled)
+            cancelled = await job_result_2.cancel()
+            logger.debug("Cancelled: {}", cancelled)
 
         # worker_info = mq.worker_for(channel="default").start()
 
         # logger.debug(await job_result_2.wait_for_result())
 
         # closing the worker
-        await asyncio.sleep(3)
+        #await asyncio.sleep(3)
+        #logger.debug("terminating")
         await worker.terminate()
 
     asyncio.run(main())
