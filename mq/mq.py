@@ -222,7 +222,9 @@ class job:
         @functools.wraps(fn)
         async def _(*args, **kwargs) -> JobCommand:
             try:
-                return await mq.job_queue.enqueue(fn, *args, **kwargs)
+                return await mq.job_queue.enqueue(
+                    fn, schedule=self._schedule, *args, **kwargs
+                )
             except Exception as e:
                 logger.exception(e)
                 raise

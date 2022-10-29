@@ -5,6 +5,8 @@ import typing
 from asyncio import CancelledError
 
 from loguru import logger
+
+# noinspection PyProtectedMember
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCursor
 
 from mq import utils
@@ -53,10 +55,10 @@ class Runner:
         stop_process_event,
     ):
         self._worker_id = worker_id
-        self._scheduler = (self.scheduler_cls or self.default_scheduler_cls)()
 
         self._client = AsyncIOMotorClient(mongo_uri)
         self._q = self._client[db_name][collection]
+        self._scheduler = (self.scheduler_cls or self.default_scheduler_cls)(self._q)
         self._worker_queue = self._client[db_name]["mq_workers"]
         self._all_events = all_events
         self._task_runner = task_runner
@@ -66,24 +68,18 @@ class Runner:
     def close(self):
         self._client.close()
 
+    @staticmethod
     async def _check_coroutine_function(
-        self, f: typing.Callable[..., typing.Any], *args, **kwargs
+        f: typing.Callable[..., typing.Any], *args, **kwargs
     ):
         if not asyncio.iscoroutinefunction(f):
             await asyncio.to_thread(f, *args, **kwargs)
         return await f(*args, **kwargs)
 
-    async def set_job_status(self, job_id: str, status: JobStatus, result=None):
-        await self._q.find_one_and_update(
-            {"_id": job_id},
-            {
-                "$set": {
-                    "status": status,
-                    "last_run_at": datetime.datetime.utcnow(),
-                    "result": result,
-                }
-            },
-        )
+    async def set_job_status(
+        self, job_id: str, schedule_job, status: JobStatus, result=None
+    ):
+        await self._scheduler.schedule(job_id, schedule_job, status, result)
 
     async def _run_task(self, current_job: Job) -> None:
         async with self._semaphore:
@@ -104,7 +100,9 @@ class Runner:
                 result = await self._check_coroutine_function(f, current_job)
             except CancelledError:
                 logger.debug("task cancelled {} !", current_job.id)
-                await self.set_job_status(current_job.id, JobStatus.CANCELLED)
+                await self.set_job_status(
+                    current_job.id, current_job.schedule, JobStatus.CANCELLED
+                )
                 # clearing
                 event = self._all_events.get("cancel_event_by_job_id").get(
                     current_job.id
@@ -113,11 +111,16 @@ class Runner:
                 raise
             except Exception as e:
                 logger.exception(e)
-                await self.set_job_status(current_job.id, JobStatus.ON_ERROR)
+                await self.set_job_status(
+                    current_job.id, current_job.schedule, JobStatus.ON_ERROR
+                )
                 raise
             else:
                 await self.set_job_status(
-                    current_job.id, JobStatus.FINISHED, result=self.serializer(result)
+                    current_job.id,
+                    current_job.schedule,
+                    JobStatus.FINISHED,
+                    result=self.serializer(result),
                 )
             finally:
                 self._worker_queue.find_one_and_update(
@@ -160,7 +163,10 @@ class Runner:
                 logger.debug("clearing ")
                 self._stop_process_event.clear()
                 break
-            cursor: AsyncIOMotorCursor = self._q.find({"status": JobStatus.WAITING})
+
+            mongo_query = self._scheduler.mongo_query()
+            cursor: AsyncIOMotorCursor = self._q.find(mongo_query)
+
             try:
                 job_as_dict = await cursor.next()
                 current_job = Job(**job_as_dict)
@@ -182,7 +188,6 @@ class Runner:
             except (StopAsyncIteration, StopIteration):
                 pass
             except CancelledError as e:
-                logger.exception(e)
                 raise e
             except Exception as e:
                 logger.exception(e)

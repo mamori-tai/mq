@@ -139,7 +139,7 @@ class Worker:
                 worker_id=self._worker_id,
                 running=WorkerStatus.RUNNING,
                 nb_tasks=0,
-               started_at=datetime.datetime.utcnow(),
+                started_at=datetime.datetime.utcnow(),
                 ended_at=None,
             )
         )
@@ -172,10 +172,7 @@ class Worker:
             cancel.add_done_callback(self._tasks.discard)
             self._tasks.add(cancel)
 
-        asyncio.get_event_loop().add_signal_handler(
-            signal.SIGINT,
-            cancel_task
-        )
+        asyncio.get_event_loop().add_signal_handler(signal.SIGINT, cancel_task)
 
         return self
 
@@ -189,7 +186,7 @@ class Worker:
                     "running": WorkerStatus.TERMINATED,
                     "ended_at": datetime.datetime.utcnow(),
                 }
-        },
+            },
         )
         self._client.close()
         self._process_pool.terminate()

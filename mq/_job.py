@@ -29,5 +29,8 @@ class Job(BaseModel):
     enqueued_at: datetime.datetime = datetime.datetime.now()
     started_at: datetime.datetime | None = None
     ended_at: datetime.datetime | None = None
+    last_run_at: datetime.datetime | None = None
+    next_run_at: datetime.datetime | None = None
 
+    schedule: bson.Binary | None = None
     result: bson.Binary | None = None

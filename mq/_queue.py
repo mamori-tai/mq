@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import pickle
 import typing
 import uuid
@@ -7,8 +8,11 @@ from typing import Callable, Any, Coroutine
 
 import pymongo
 from loguru import logger
+
+# noinspection PyProtectedMember
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 from pymongo.errors import CollectionInvalid
+from schedule import Job as ScheduleJob
 
 from mq._job import Job
 from mq.utils import MongoDBConnectionParameters, wait_for_event_cleared, dumps
@@ -35,16 +39,13 @@ class JobCommand:
         return self._job_id
 
     async def job(self):
-        return await self._job_queue._q.find_one({"_id": self._job_id})
+        return await self._job_queue.q.find_one({"_id": self._job_id})
 
     async def cancel(self) -> bool:
         """
         Returns:
 
         """
-        #job = await self.job()
-        #if job["status"] == "finished":
-        #    return False
         ev = self._shared_memory.cancel_event_by_job_id.get(self._job_id)
         if ev is None:
             raise ValueError("Could not find event")
@@ -89,13 +90,13 @@ class JobQueue:
         self._mongodb_connection = mongodb_connection
         self._client = AsyncIOMotorClient(mongodb_connection.mongo_uri)
         self._db = self._client[mongodb_connection.db_name]
-        self._q: AsyncIOMotorCollection = None
+        self.q: AsyncIOMotorCollection = None
         self._shared_memory = shared_memory
 
     async def init(self):
         if not await self._exists():
             await self._create()
-        self._q = self._db[self.connection_parameters.collection]
+        self.q = self._db[self.connection_parameters.collection]
 
     @property
     def connection_parameters(self):
@@ -120,16 +121,26 @@ class JobQueue:
     async def enqueue(
         self, f: Callable[..., Any] | Coroutine | None, *args: Any, **kwargs: Any
     ) -> JobCommand:
-        assert self._q is not None
+        assert self.q is not None
         job_id = str(uuid.uuid4())
         payload = kwargs.pop("payload", None)
-        data = (
-            dict(f=dumps((f, args, kwargs))) if f is not None else dict(payload=payload)
+        schedule_job: ScheduleJob = kwargs.pop("schedule", None)
+        # schedule next run
+        if schedule_job is not None:
+            # noinspection PyProtectedMember
+            schedule_job._schedule_next_run()
+
+        data = dict(
+            f=dumps((f, args, kwargs)) if f is not None else None,
+            payload=payload,
+            schedule=dumps(schedule_job) if schedule_job is not None else None,
+            next_run_at=schedule_job.next_run
+            if schedule_job is not None
+            else datetime.datetime.now(),
         )
-        logger.debug(data)
         job = Job(id=job_id, **data)
         job_command = JobCommand(
             job_id=job_id, job_queue=self, shared_memory=self._shared_memory
         )
-        await self._q.insert_one(job.dict(by_alias=True))
+        await self.q.insert_one(job.dict(by_alias=True))
         return job_command
