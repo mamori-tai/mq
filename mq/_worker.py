@@ -2,51 +2,56 @@ import asyncio
 import datetime
 import multiprocessing
 import signal
-import typing
-import uuid
 from enum import IntEnum
 from functools import partial
-from multiprocessing.managers import SyncManager
-from typing import Any
 
 from loguru import logger
-from motor.motor_asyncio import AsyncIOMotorClient
 
-from mq._job import Job
-from mq._runner import TaskRunnerProtocol, RunnerProtocol
-from mq.utils import (
-    wait_for_event_cleared,
-    MongoDBConnectionParameters,
-    MQManagerConnectionParameters,
-)
+# noinspection PyProtectedMember
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from mq._runner import RunnerProtocol
+from mq.utils import wait_for_event_cleared
 
 
-def syncify(coroutine_function, *args, **kwargs):
+class NoDaemonProcess(multiprocessing.Process):
+    # make 'daemon' attribute always return False
+    @property
+    def daemon(self):
+        return False
+
+    @daemon.setter
+    def daemon(self, val):
+        pass
+
+
+class NoDaemonProcessPool(multiprocessing.pool.Pool):
+    def Process(self, *args, **kwds):
+        proc = super(NoDaemonProcessPool, self).Process(*args, **kwds)
+        proc.__class__ = NoDaemonProcess
+
+        return proc
+
+
+def syncify(coroutine_function):
     """
-
     Args:
         coroutine_function:
         *args:
         **kwargs:
-
     Returns:
-
     """
-    asyncio.run(coroutine_function(*args, **kwargs))
+    try:
+        asyncio.run(coroutine_function())
+    except KeyboardInterrupt:
+        logger.debug("Keyboard interrupted")
+    logger.debug("Finished")
 
 
 def build_runner(
-    runner_cls: typing.Type[RunnerProtocol],
-    task_runner: TaskRunnerProtocol | typing.Callable[[Job], Any],
-    *args,
-    **kwargs,
+    runner: RunnerProtocol,
 ):
-    runner = runner_cls(task_runner, *args, **kwargs)
     return runner.dequeue()
-
-
-class MQManager(SyncManager):
-    pass
 
 
 class WorkerStatus(IntEnum):
@@ -59,84 +64,30 @@ class Worker:
 
     def __init__(
         self,
-        connection_parameters: MongoDBConnectionParameters,
         *,
-        channel: str,
-        all_events: dict[str, dict[str, Any]] = None,
-        mq_manager_parameters: MQManagerConnectionParameters | None = None,
-        task_runner: TaskRunnerProtocol | typing.Callable[[Job], Any] = None,
-        runner_cls: typing.Type[RunnerProtocol],
+        worker_id: str,
+        db: AsyncIOMotorDatabase,
+        nb_processes: int = 1,
+        runner: RunnerProtocol,
+        worker_stop_event: multiprocessing.Event,
+        parent_manager,
     ):
-
-        self._worker_id = str(uuid.uuid4())
-        self._connection_parameters = connection_parameters
-
-        self._client = AsyncIOMotorClient(connection_parameters.mongo_uri)
-        self._q = self._client[connection_parameters.db_name][self.collection]
-
-        self._mq_manager_parameters = mq_manager_parameters
-        self.channel = channel
-
-        self._max_concurrency: int = 1
-        self._dequeuing_delay: int = 3
-        self._nb_process: int = 1
-        self._process_pool = multiprocessing.Pool(processes=self._nb_process)
-
-        self._all_events = all_events
-        self._tasks = set()
-
-        # customizing classes
-        self._runner_cls = runner_cls
-        self._task_runner = task_runner
-
-    def connect(self):
-        MQManager.register("events_by_job_id")
-        MQManager.register("init_cancel_event_for_worker_id")
-
-        authkey = self._mq_manager_parameters.authkey
-        m = MQManager(
-            address=(self._mq_manager_parameters.url, self._mq_manager_parameters.port),
-            authkey=authkey,
+        self._q = db[self.collection]
+        self.worker_id = worker_id
+        self._runner = runner
+        self._nb_process = nb_processes
+        self.worker_stop_event = worker_stop_event
+        self.parent_manager = parent_manager
+        self._process_executor: multiprocessing.Pool = NoDaemonProcessPool(
+            processes=nb_processes,
         )
-        m.connect()
-        self._all_events = m.events_by_job_id()
-        # noinspection PyUnresolvedReferences
-        m.init_cancel_event_for_worker_id(self._worker_id)
-        return m
-
-    @property
-    def stop_process_event(self):
-        return self._all_events.get("cancel_event_by_job_id").get(self._worker_id)
-
-    def init_cancel_event(self, event):
-        """
-        init cancel event in local environment i.e. workers
-        are direct children of the main process
-        Args:
-            event:
-
-        Returns:
-
-        """
-        # init_cancel_event_for_worker_id
-        self._all_events["cancel_event_by_job_id"][self._worker_id] = event
-
-    def with_task_runner(
-        self, task_runner: TaskRunnerProtocol | typing.Callable[[Job], Any]
-    ):
-        if self._task_runner is not None:
-            raise ValueError(
-                f"task runner already set to {self._task_runner}."
-                f" May be inherited from registered_task runner."
-                f" Please check your task runner registration."
-            )
-        self._task_runner = task_runner
-        return self
+        self._tasks = set()
+        self.future: asyncio.Future | None = None
 
     async def start(self):
-        await self._q.insert_one(
+        self._q.insert_one(
             dict(
-                worker_id=self._worker_id,
+                worker_id=self.worker_id,
                 running=WorkerStatus.RUNNING,
                 nb_tasks=0,
                 started_at=datetime.datetime.utcnow(),
@@ -144,43 +95,32 @@ class Worker:
             )
         )
 
-        connection_parameters = self._connection_parameters
-        self._process_pool.apply_async(
-            partial(
-                syncify,
-                partial(
-                    build_runner,
-                    self._runner_cls,
-                    self._task_runner,
-                    self._worker_id,
-                    connection_parameters.mongo_uri,
-                    connection_parameters.db_name,
-                    connection_parameters.collection,
-                    self._all_events,
-                    self.stop_process_event,
-                ),
-            )
+        self._process_executor.apply_async(
+            syncify,
+            args=(partial(build_runner, self._runner),),
+            error_callback=logger.debug,
         )
         # closing directly
-        self._process_pool.close()
+        self._process_executor.close()
 
         # join in a thread
-        asyncio.get_running_loop().run_in_executor(None, self._process_pool.join)
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, self._process_executor.join)
 
         def cancel_task():
             cancel = asyncio.ensure_future(self.terminate())
             cancel.add_done_callback(self._tasks.discard)
             self._tasks.add(cancel)
 
-        asyncio.get_event_loop().add_signal_handler(signal.SIGINT, cancel_task)
+        loop.add_signal_handler(signal.SIGINT, cancel_task)
 
         return self
 
     async def terminate(self):
-        self.stop_process_event.set()
-        await wait_for_event_cleared(self.stop_process_event)
+        self.worker_stop_event.set()
+        await wait_for_event_cleared(self.worker_stop_event, 10)
         await self._q.find_one_and_update(
-            dict(worker_id=self._worker_id),
+            dict(worker_id=self.worker_id),
             {
                 "$set": {
                     "running": WorkerStatus.TERMINATED,
@@ -188,11 +128,12 @@ class Worker:
                 }
             },
         )
-        self._client.close()
-        self._process_pool.terminate()
+        self.parent_manager.shutdown()
+        self._process_executor.terminate()
 
-    async def scale_up(self, up: int):
+    async def scale_up(self, up: int, max_concurrency: int):
         await self.terminate()
         self._nb_process = up
-        logger.info("scaling worker {} to {} processes", self._worker_id, up)
-        self._process_pool = multiprocessing.Pool(processes=self._nb_process)
+        self._max_concurrency = max_concurrency
+        logger.info("scaling worker {} to {} processes", self.worker_id, up)
+        self._process_executor = multiprocessing.Pool(processes=self._nb_process)

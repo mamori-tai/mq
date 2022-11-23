@@ -1,54 +1,52 @@
 import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 # noinspection PyProtectedMember
-from motor.motor_asyncio import AsyncIOMotorCollection
 from schedule import Job as ScheduleJob
 
-from mq._job import JobStatus
-from mq.utils import loads, dumps
+from mq._job import Job, JobStatus
+from mq.utils import dumps, loads
 
 
 class SchedulerProtocol(Protocol):
-    q: AsyncIOMotorCollection
-
-    async def schedule(self, *args, **kwargs):
+    def on_enqueue_job(self, current_job: Job, schedule_obj: Any = None):
         pass
 
-    def mongo_query(self):
+    def schedule_job(self, current_job: Job) -> bool:
+        ...
+
+    def mongo_query(self) -> dict[str, Any]:
         pass
 
 
 class DefaultScheduler:
-    def __init__(self, collection: AsyncIOMotorCollection):
-        self.q = collection
+    def on_enqueue_job(self, current_job: Job, schedule_obj: ScheduleJob = None):
+        if schedule_obj is None:
+            current_job.next_run_at = datetime.datetime.now()
+            return
+        schedule_obj._schedule_next_run()
+        current_job.next_run_at = schedule_obj.next_run
+        current_job.extra["schedule"] = dumps(schedule_obj)
 
-    async def schedule(self, job_id: str, schedule_job, status: JobStatus, result=None):
-        now = datetime.datetime.now()
-        is_job_scheduled = schedule_job is not None
-        schedule_job: ScheduleJob = loads(schedule_job) if is_job_scheduled else None
+    def schedule_job(self, current_job: Job):
+        try:
+            now = datetime.datetime.now()
+            current_job.last_run_at = now
 
-        if is_job_scheduled:
-            schedule_job.last_run = now
+            if (schedule_obj_bin := current_job.extra.get("schedule")) is None:
+                current_job.next_run_at = None
+                return False
+
+            schedule_obj = loads(schedule_obj_bin)
             # noinspection PyProtectedMember
-            schedule_job._schedule_next_run()
+            schedule_obj._schedule_next_run()
 
-        computed_status = status
-        if status != JobStatus.CANCELLED:
-            computed_status = status if not is_job_scheduled else JobStatus.WAITING
-
-        await self.q.find_one_and_update(
-            {"_id": job_id},
-            {
-                "$set": {
-                    "status": computed_status,
-                    "last_run_at": now,
-                    "next_run_at": schedule_job.next_run if is_job_scheduled else None,
-                    "schedule": dumps(schedule_job) if is_job_scheduled else None,
-                    "result": result,
-                }
-            },
-        )
+            current_job.next_run_at = schedule_obj.next_run
+            schedule_obj.last_run = now
+            current_job.extra["schedule"] = dumps(schedule_obj)
+            return True
+        except Exception:
+            raise
 
     def mongo_query(self):
         return {

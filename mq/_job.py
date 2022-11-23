@@ -1,9 +1,9 @@
+import dataclasses
 import datetime
 import enum
 from typing import Any
 
 import bson
-from pydantic import BaseModel, Field
 
 
 class JobStatus(str, enum.Enum):
@@ -14,23 +14,25 @@ class JobStatus(str, enum.Enum):
     FINISHED = "finished"
 
 
-class Job(BaseModel):
-    class Config:
-        allow_population_by_field_name = True
-        arbitrary_types_allowed = True
+@dataclasses.dataclass
+class Job:
+    _id: str
+    f: bson.Binary | None = None
+    payload: dict[str, Any] | None = None
 
-    id: str = Field("", alias="_id")
-    locked_by: str | None
-    f: bson.Binary | None
-    payload: dict[str, Any] | None
+    locked_by: str | None = None
+    status: JobStatus = dataclasses.field(default=JobStatus.WAITING)
 
-    status: JobStatus = JobStatus.WAITING
-
-    enqueued_at: datetime.datetime = datetime.datetime.now()
-    started_at: datetime.datetime | None = None
-    ended_at: datetime.datetime | None = None
+    enqueued_at: datetime.datetime = dataclasses.field(
+        default_factory=datetime.datetime.now
+    )
+    last_duration: int | None = None
     last_run_at: datetime.datetime | None = None
     next_run_at: datetime.datetime | None = None
-
-    schedule: bson.Binary | None = None
     result: bson.Binary | None = None
+
+    extra: dict[str, Any] = dataclasses.field(default_factory=dict)
+
+    @property
+    def id(self):
+        return self._id

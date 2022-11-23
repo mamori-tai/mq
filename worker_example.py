@@ -1,10 +1,8 @@
 import asyncio
-import multiprocessing
 
 from loguru import logger
 
 from mq import mq, register_task_runner
-from mq._worker import Worker
 from mq.utils import MongoDBConnectionParameters, MQManagerConnectionParameters
 
 
