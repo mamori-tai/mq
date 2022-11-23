@@ -27,6 +27,7 @@ class NoDaemonProcess(multiprocessing.Process):
 
 class NoDaemonProcessPool(multiprocessing.pool.Pool):
     def Process(self, *args, **kwds):
+        # noinspection PyUnresolvedReferences
         proc = super(NoDaemonProcessPool, self).Process(*args, **kwds)
         proc.__class__ = NoDaemonProcess
 

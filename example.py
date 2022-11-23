@@ -98,7 +98,7 @@ if __name__ == "__main__":
         # closing the worker
         # await asyncio.sleep(3)
         # logger.debug("terminating")
-        # await worker.terminate()
+        #await worker.terminate()
         logger.debug(worker.future)
         return worker.future
 

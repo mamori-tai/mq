@@ -13,7 +13,7 @@ from pymongo.errors import CollectionInvalid
 
 from mq._job import Job, JobStatus
 from mq._scheduler import SchedulerProtocol
-from mq.utils import EnqueueMixin, MongoDBConnectionParameters, loads
+from mq.utils import EnqueueMixin, MongoDBConnectionParameters, loads, wait_for_event_cleared
 
 if typing.TYPE_CHECKING:
     from mq.mq import P
@@ -60,8 +60,7 @@ class JobCommand:
             raise ValueError("Could not find event")
 
         ev.set()
-        return True
-        # return await wait_for_event_cleared(ev, timeout=1)
+        return await wait_for_event_cleared(ev, timeout=1)
 
     async def wait_for_result(self, timeout: float = 10):
         event = self.events.get(self._job_id)[0]
