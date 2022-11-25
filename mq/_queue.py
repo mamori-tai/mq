@@ -63,6 +63,10 @@ class JobCommand(CancelDownstreamJobMixin):
         job = await self.job(as_job=True)
         if job.status not in {JobStatus.CANCELLED, JobStatus.CANCELLED, JobStatus.FINISHED}:
             raise DeleteJobError(f"Job id {job.id} in status {job.status}")
+        # delete from all events
+        del self.events[job.id]
+
+        # delete from database
         return await self.q.delete_one({"_id": job.id})
 
     def command_for(self, downstream_id: str):

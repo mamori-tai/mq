@@ -14,7 +14,6 @@ from typing import Any, Callable, Coroutine, Protocol
 
 import async_timeout
 import dill
-from loguru import logger
 from motor.motor_asyncio import AsyncIOMotorCollection
 
 from mq._job import Job, JobStatus

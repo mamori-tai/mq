@@ -1,14 +1,10 @@
 import asyncio
-import random
 
 from loguru import logger
 
 from mq import mq
-from mq._queue import JobCommand
 from mq.utils import MongoDBConnectionParameters, MQManagerConnectionParameters
-
-from tests.common import job_test, test_retry
-
+from tests.common import test_retry
 
 if __name__ == "__main__":
 

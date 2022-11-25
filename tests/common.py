@@ -1,6 +1,6 @@
 import asyncio
 
-from tenacity import stop_after_delay, stop_after_attempt
+from tenacity import stop_after_attempt
 
 from mq import job
 
