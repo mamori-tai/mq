@@ -252,22 +252,39 @@ class mongodb_connection_parameters:
 class job:
     """ """
 
-    def __init__(self, *, channel: str, schedule: JobSchedule.Job = None):
+    def __init__(
+        self,
+        *,
+        channel: str,
+        schedule: JobSchedule.Job = None,
+        downstream: list[Any] = None,
+        # supporting only these attributes
+        stop=None,
+        wait=None,
+        retry=None
+    ):
         self._channel = channel
         self._schedule = schedule
+        self._downstream = downstream
+        self._retry = retry
+        self._stop = stop
+        self._wait = wait
 
     def __call__(self, fn):
         @functools.wraps(fn)
         async def _(*args, **kwargs) -> JobCommand:
             try:
-                return await mq.job_queue.enqueue(
-                    fn, schedule=self._schedule, *args, **kwargs
-                )
+                return await mq.job_queue.enqueue(fn, *args, **kwargs)
             except Exception as e:
                 logger.exception(e)
                 raise
 
         fn.mq = _
+        fn._downstream = self._downstream
+        fn._schedule = self._schedule
+        fn._retry = self._retry
+        fn._stop = self._stop
+        self._wait = self._wait
         return fn
 
 

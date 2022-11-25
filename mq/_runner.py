@@ -14,10 +14,10 @@ from motor.motor_asyncio import (
     AsyncIOMotorCollection,
     AsyncIOMotorCursor,
 )
+from tenacity import AsyncRetrying, RetryError
 
 from mq import utils
 from mq._job import Job, JobStatus
-from mq._queue import JobCommand
 from mq._scheduler import DefaultScheduler, SchedulerProtocol
 from mq.utils import EnqueueMixin, MongoDBConnectionParameters, loads
 
@@ -28,13 +28,27 @@ class TaskRunnerProtocol(typing.Protocol):
 
 
 class DefaultTaskRunner:
-    async def run(self, current_job: Job, enqueue: typing.Any | None) -> typing.Any:
+    async def _run(self, f, *args, **kwargs):
+        if asyncio.iscoroutinefunction(f):
+            return await f(*args, **kwargs)
+        # if not a coroutine function launching in a thread
+        return await asyncio.to_thread(f, *args, **kwargs)
+
+    async def run(self, current_job: Job) -> typing.Any:
         if current_job.f is None:
             raise TypeError("job function definition does not exist")
         f, args, kwargs = loads(current_job.f)
-        if asyncio.iscoroutinefunction(f):
-            return await f(*args, **kwargs)
-        return await asyncio.to_thread(f, *args, **kwargs)
+        retry = current_job.extra.get("retry")
+        if retry is not None:
+            retry = loads(retry)
+        if retry is not None:
+            async for attempt in AsyncRetrying(stop=retry):
+                logger.debug("retry")
+                with attempt:
+                    return await self._run(f, *args, **kwargs)
+            return
+
+        return await self._run(f, *args, **kwargs)
 
 
 class RunnerProtocol(typing.Protocol):
@@ -91,18 +105,6 @@ class DefaultRunner(EnqueueMixin):
         self.manager: SyncManager | None = None
         self._tasks = set()
 
-    async def enqueue(
-        self,
-        f: typing.Callable[..., typing.Any] | typing.Coroutine | None,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ):
-        job = await self.enqueue_job(f, *args, **kwargs)
-        self.events[job.id] = self.manager.list(
-            self.manager.Event(), self.manager.Event()
-        )
-        return JobCommand(job_id=job._id, q=self.q, events=self.events)
-
     @staticmethod
     async def _check_coroutine_function(
         f: typing.Callable[..., typing.Any], *args, **kwargs
@@ -129,6 +131,30 @@ class DefaultRunner(EnqueueMixin):
             },
         )
 
+    async def cancel_downstream(self, computed_downstream: dict[str, typing.Any]):
+        "should be a mixin to be provided by job command"
+        for job_id, child in computed_downstream.items():
+            self.q.find_one_and_update(
+                {"_id": job_id}, {"$set": {"status": JobStatus.CANCELLED}}
+            )
+            await self.cancel_downstream(child)
+
+    async def set_downstream_job_status(
+        self, computed_downstream: dict[str, typing.Any], result: typing.Any = None
+    ):
+        for job_id in computed_downstream.keys():
+            job = Job(**await self.q.find_one({"_id": job_id}))
+            f, args, kwargs = loads(job.f)
+            self.q.find_one_and_update(
+                {"_id": job_id, "status": JobStatus.WAITING_FOR_UPSTREAM},
+                {
+                    "$set": {
+                        "status": JobStatus.WAITING,
+                        "f": self.serializer((f, (result,), {})),
+                    }
+                },
+            )
+
     async def _run_task(self, current_job: Job) -> None:
         async with self._semaphore:
 
@@ -143,12 +169,13 @@ class DefaultRunner(EnqueueMixin):
                         f = self._task_runner.run
                     else:
                         f = self._task_runner
-                result = await self._check_coroutine_function(
-                    f, current_job, self.enqueue
-                )
+                result = await self._check_coroutine_function(f, current_job)
             except CancelledError:
                 logger.debug("task cancelled {} !", current_job.id)
                 await self.set_job_status(current_job, JobStatus.CANCELLED)
+                await self.cancel_downstream(
+                    computed_downstream=current_job.computed_downstream
+                )
                 # clearing
                 event = self.events.get(current_job.id)[1]
                 event.clear()
@@ -156,8 +183,12 @@ class DefaultRunner(EnqueueMixin):
                 del self.events[current_job.id]
                 raise
             except Exception as e:
-                logger.exception(e)
+                if not isinstance(e, RetryError):
+                    logger.exception(e)
                 await self.set_job_status(current_job, JobStatus.ON_ERROR)
+                await self.cancel_downstream(
+                    computed_downstream=current_job.computed_downstream
+                )
                 raise
             else:
                 await self.set_job_status(
@@ -165,7 +196,14 @@ class DefaultRunner(EnqueueMixin):
                     JobStatus.FINISHED,
                     result=self.serializer(result),
                 )
+                await self.set_downstream_job_status(
+                    current_job.computed_downstream, result=result
+                )
+
+                event = self.events.get(current_job.id)[0]
+                event.set()
             finally:
+                logger.debug("Task {} finished", current_job.id)
                 self._wq.find_one_and_update(
                     dict(worker_id=self._worker_id), {"$inc": {"nb_tasks": 1}}
                 )
@@ -177,7 +215,6 @@ class DefaultRunner(EnqueueMixin):
         job_id = current_job.id
         get_event = self.events.get
         cancel_event = get_event(job_id)[1]
-        result_event = get_event(job_id)[0]
 
         task = asyncio.create_task(self._run_task(current_job))
 
@@ -188,12 +225,7 @@ class DefaultRunner(EnqueueMixin):
         )
 
         def _task_cb(t):
-            if result_event is not None:
-                result_event.set()
             if not t.cancelled():
-                if exc := t.exception():
-                    logger.exception(exc)
-                    raise exc
                 if cancel_task is not None:
                     cancel_task.cancel()
 
@@ -245,10 +277,12 @@ class DefaultRunner(EnqueueMixin):
                 pass
             except CancelledError:
                 logger.debug("Runner cancelled")
+                worker_stop_event.clear()
                 raise
             except Exception as e:
                 logger.debug("Unknown error, runner cancelled")
                 logger.exception(e)
+                worker_stop_event.clear()
                 raise
 
     async def post_init(self) -> None:

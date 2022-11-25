@@ -1,18 +1,23 @@
 import abc
 import asyncio
+import concurrent.futures
 import dataclasses
 import multiprocessing
 import pickle
+import threading
+import time
 import typing
 import uuid
 from functools import partial
+from multiprocessing.managers import SyncManager
 from typing import Any, Callable, Coroutine, Protocol
 
 import async_timeout
 import dill
+from loguru import logger
 from motor.motor_asyncio import AsyncIOMotorCollection
 
-from mq._job import Job
+from mq._job import Job, JobStatus
 
 if typing.TYPE_CHECKING:
     from mq._scheduler import SchedulerProtocol
@@ -34,7 +39,9 @@ class MQManagerConnectionParameters:
     authkey: bytes = b"abracadabra"
 
 
-async def wait_for_event_cleared(ev: multiprocessing.Event, timeout: float = 0.5):
+async def wait_for_event_cleared(
+    ev: multiprocessing.Event, timeout: float | None = None
+):
     """
     Tried condition a lot
     Args:
@@ -45,53 +52,118 @@ async def wait_for_event_cleared(ev: multiprocessing.Event, timeout: float = 0.5
 
     """
 
-    async def _check_ev():
+    def _check_ev():
         while 1:
             event_is_not_set = not ev.is_set()
             if event_is_not_set:
                 return True
-            await asyncio.sleep(0.1)
+            time.sleep(0.1)
 
+    executor = concurrent.futures.ThreadPoolExecutor()
     try:
         async with async_timeout.timeout(timeout):
-            await _check_ev()
+            # asyncio.to_thread was failing on ctrl-c interrupt
+            # due to default executor shutdown
+            await asyncio.get_running_loop().run_in_executor(executor, _check_ev)
         return True
     except asyncio.TimeoutError:
         return False
+    finally:
+        executor.shutdown()
 
 
 loads = dill.loads
 dumps = partial(dill.dumps, protocol=pickle.HIGHEST_PROTOCOL, byref=False, recurse=True)
 
 
-class EnqueueProtocol(Protocol):
+class QueueAwareProtocol(Protocol):
     q: AsyncIOMotorCollection
+
+
+class EventsAwareProtocol(Protocol):
+    events: dict[str, list[threading.Event]]
+
+
+class EnqueueProtocol(QueueAwareProtocol, Protocol):
     scheduler: "SchedulerProtocol"
 
-    async def enqueue(self):
+    async def enqueue_job(self):
+        ...
+
+    async def enqueue_downstream(self):
         ...
 
 
+Function = Callable[..., Any] | Coroutine | None
+FunctionList = list[Callable[..., Any] | Coroutine | None] | None
+
+
 class EnqueueMixin(abc.ABC):
+    async def enqueue_downstream(
+        self,
+        downstream: FunctionList = None,
+        job_ids: dict[str, Any] = None,
+        events: dict[str, list[threading.Event]] = None,
+        manager: SyncManager = None,
+    ):
+        # assign id to each recursively
+        for f in downstream or []:
+            f_id = str(uuid.uuid4())
+            job_ids[f_id] = {}
+            await self.enqueue_job(
+                job_id=f_id, status=JobStatus.WAITING_FOR_UPSTREAM, downstream_job=job_ids[f_id], events=events, manager=manager, f=(f, (), {})
+            )
+        return job_ids
+
     async def enqueue_job(
         self: EnqueueProtocol,
-        f: Callable[..., Any] | Coroutine | None,
-        *args: Any,
-        **kwargs: Any,
+        job_id: str | None,
+        status: JobStatus = JobStatus.WAITING,
+        downstream_job: dict[str, Any] | None = None,
+        events: dict[str, list[threading.Event]] | None = None,
+        manager: SyncManager | None = None,
+        f: tuple[Callable[..., Any] | Coroutine | None, tuple, dict] = None,
     ) -> Job:
         assert self.q is not None
-        job_id = str(uuid.uuid4())
+        job_id = job_id or str(uuid.uuid4())
+        fn, args, kwargs = f
         payload = kwargs.pop("payload", None)
 
         # get the stuff that is passed to the schedules kwarg
-        schedule_obj = kwargs.pop("schedule", None)
-        job = Job(
-            _id=job_id,
-            f=dumps((f, args, kwargs)) if f is not None else None,
-            payload=payload,
+        downstream = getattr(fn, "_downstream", None)
+
+        computed_downstream = await self.enqueue_downstream(
+            downstream, downstream_job, events, manager
         )
 
-        self.scheduler.on_enqueue_job(job, schedule_obj)
+        job = Job(
+            _id=job_id,
+            f=dumps((fn, args, kwargs)) if f is not None else None,
+            status=status,
+            computed_downstream=computed_downstream,
+            payload=payload,
+        )
+        # setting events
+        events[job.id] = manager.list([manager.Event(), manager.Event()])
+
+        schedule_policy = getattr(fn, "_schedule", None)
+        retry_policy = getattr(fn, "_stop", None)
+        self.scheduler.on_enqueue_job(job, schedule_policy, retry_policy)
         await self.q.insert_one(dataclasses.asdict(job))
 
         return job
+
+
+class CancelDownstreamJobMixin(QueueAwareProtocol, EventsAwareProtocol, Protocol):
+    async def cancel_downstream(self, computed_downstream: dict[str, typing.Any]):
+        "should be a mixin to be provided by job command"
+        for job_id, child in computed_downstream.items():
+            self.q.find_one_and_update(
+                {"_id": job_id}, {"$set": {"status": JobStatus.CANCELLED}}
+            )
+            try:
+                ev = self.events.get(job_id)[1]
+                ev.set()
+            except IndexError:
+                pass
+            await self.cancel_downstream(child)

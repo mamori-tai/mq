@@ -9,7 +9,7 @@ from mq.utils import dumps, loads
 
 
 class SchedulerProtocol(Protocol):
-    def on_enqueue_job(self, current_job: Job, schedule_obj: Any = None):
+    def on_enqueue_job(self, current_job: Job, schedule_policy: Any = None, retry_policy: Any = None):
         pass
 
     def schedule_job(self, current_job: Job) -> bool:
@@ -20,13 +20,15 @@ class SchedulerProtocol(Protocol):
 
 
 class DefaultScheduler:
-    def on_enqueue_job(self, current_job: Job, schedule_obj: ScheduleJob = None):
-        if schedule_obj is None:
+    def on_enqueue_job(self, current_job: Job, schedule_policy: ScheduleJob = None, retry_policy: Any = None):
+        current_job.extra["retry"] = dumps(retry_policy)
+
+        if schedule_policy is None:
             current_job.next_run_at = datetime.datetime.now()
             return
-        schedule_obj._schedule_next_run()
-        current_job.next_run_at = schedule_obj.next_run
-        current_job.extra["schedule"] = dumps(schedule_obj)
+        schedule_policy._schedule_next_run()
+        current_job.next_run_at = schedule_policy.next_run
+        current_job.extra["schedule"] = dumps(schedule_policy)
 
     def schedule_job(self, current_job: Job):
         try:

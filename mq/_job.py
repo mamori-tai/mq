@@ -9,6 +9,7 @@ import bson
 class JobStatus(str, enum.Enum):
     CANCELLED = "cancelled"
     WAITING = "waiting"
+    WAITING_FOR_UPSTREAM = "waiting_for_upstream"
     PENDING = "pending"
     ON_ERROR = "on_error"
     FINISHED = "finished"
@@ -19,6 +20,7 @@ class Job:
     _id: str
     f: bson.Binary | None = None
     payload: dict[str, Any] | None = None
+    computed_downstream: dict[str, Any] | None = None
 
     locked_by: str | None = None
     status: JobStatus = dataclasses.field(default=JobStatus.WAITING)
