@@ -21,7 +21,10 @@ class SchedulerProtocol(Protocol):
 
 class DefaultScheduler:
     def on_enqueue_job(self, current_job: Job, schedule_policy: ScheduleJob = None, retry_policy: Any = None):
-        current_job.extra["retry"] = dumps(retry_policy)
+        if retry_policy is None:
+            current_job.extra["retry"] = None
+        else:
+            current_job.extra["retry"] = {k: dumps(v) for k, v in  retry_policy.items()}
 
         if schedule_policy is None:
             current_job.next_run_at = datetime.datetime.now()

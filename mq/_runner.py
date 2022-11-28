@@ -40,10 +40,10 @@ class DefaultTaskRunner:
         f, args, kwargs = loads(current_job.f)
         retry = current_job.extra.get("retry")
         if retry is not None:
-            retry = loads(retry)
+            retry = {k: v for k, v in {k: loads(v) for k, v in retry.items()}.items() if v is not None}
         if retry is not None:
-            async for attempt in AsyncRetrying(stop=retry):
-                logger.debug("retry")
+            async for attempt in AsyncRetrying(**retry):
+                logger.debug("retrying...")
                 with attempt:
                     return await self._run(f, *args, **kwargs)
             return
@@ -176,11 +176,6 @@ class DefaultRunner(EnqueueMixin):
                 await self.cancel_downstream(
                     computed_downstream=current_job.computed_downstream
                 )
-                # clearing
-                event = self.events.get(current_job.id)[1]
-                event.clear()
-
-                del self.events[current_job.id]
                 raise
             except Exception as e:
                 if not isinstance(e, RetryError):
@@ -199,14 +194,13 @@ class DefaultRunner(EnqueueMixin):
                 await self.set_downstream_job_status(
                     current_job.computed_downstream, result=result
                 )
-
-                event = self.events.get(current_job.id)[0]
-                event.set()
             finally:
                 logger.debug("Task {} finished", current_job.id)
                 self._wq.find_one_and_update(
                     dict(worker_id=self._worker_id), {"$inc": {"nb_tasks": 1}}
                 )
+                event_result = self.events.get(current_job.id)[0]
+                event_result.set()
 
     async def wait(self):
         await asyncio.sleep(3)
@@ -252,7 +246,6 @@ class DefaultRunner(EnqueueMixin):
             if worker_stop_event.is_set():
                 logger.debug("worker required to stop")
                 self._client.close()
-                worker_stop_event.clear()
                 break
             mongo_query = self.scheduler.mongo_query()
             cursor: AsyncIOMotorCursor = self.q.find(mongo_query)

@@ -38,39 +38,6 @@ class MQManagerConnectionParameters:
     authkey: bytes = b"abracadabra"
 
 
-async def wait_for_event_cleared(
-    ev: multiprocessing.Event, timeout: float | None = None
-):
-    """
-    Tried condition a lot
-    Args:
-        ev:
-        timeout:
-
-    Returns:
-
-    """
-
-    def _check_ev():
-        while 1:
-            event_is_not_set = not ev.is_set()
-            if event_is_not_set:
-                return True
-            time.sleep(0.1)
-
-    executor = concurrent.futures.ThreadPoolExecutor()
-    try:
-        async with async_timeout.timeout(timeout):
-            # asyncio.to_thread was failing on ctrl-c interrupt
-            # due to default executor shutdown
-            await asyncio.get_running_loop().run_in_executor(executor, _check_ev)
-        return True
-    except asyncio.TimeoutError:
-        return False
-    finally:
-        executor.shutdown()
-
-
 loads = dill.loads
 dumps = partial(dill.dumps, protocol=pickle.HIGHEST_PROTOCOL, byref=False, recurse=True)
 
@@ -146,7 +113,11 @@ class EnqueueMixin(abc.ABC):
         events[job.id] = manager.list([manager.Event(), manager.Event()])
 
         schedule_policy = getattr(fn, "_schedule", None)
-        retry_policy = getattr(fn, "_stop", None)
+        retry_policy = {
+            "stop": getattr(fn, "_stop", None),
+            "retry": getattr(fn, "_retry", None),
+            "wait": getattr(fn, "_wait", None)
+        }
         self.scheduler.on_enqueue_job(job, schedule_policy, retry_policy)
         await self.q.insert_one(dataclasses.asdict(job))
 

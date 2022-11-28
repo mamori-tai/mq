@@ -34,3 +34,8 @@ async def job_test(a, b):
 async def test_retry(a, b):
     await asyncio.sleep(0.1)
     raise ValueError("")
+
+
+@job(channel="test")
+async def test_exception():
+    raise ValueError("HOOO")

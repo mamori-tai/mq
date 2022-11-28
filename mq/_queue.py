@@ -20,7 +20,7 @@ from mq.utils import (
     EnqueueMixin,
     MongoDBConnectionParameters,
     loads,
-    wait_for_event_cleared, CancelDownstreamJobMixin,
+    CancelDownstreamJobMixin,
 )
 
 if typing.TYPE_CHECKING:
@@ -72,7 +72,7 @@ class JobCommand(CancelDownstreamJobMixin):
     def command_for(self, downstream_id: str):
         return JobCommand(downstream_id, self.q, self.events)
 
-    async def leaves(self, leaves = None):
+    async def leaves(self, leaves=None):
         if leaves is None:
             leaves = []
         job_as_dict = await self.job(as_job=True)
@@ -103,13 +103,19 @@ class JobCommand(CancelDownstreamJobMixin):
             raise ValueError("Could not find event")
 
         ev.set()
-        is_cancelled = await wait_for_event_cleared(ev, timeout=1)
-        if is_cancelled:
-            logger.debug("Cancelling downstream job...")
-            await self.cancel_downstream(computed_downstream=(await self.job())["computed_downstream"])
-        return is_cancelled
+        logger.debug("Cancelling downstream job...")
+        await self.cancel_downstream(computed_downstream=(await self.job())["computed_downstream"])
+        return (await self.job())["status"] == JobStatus.CANCELLED
 
     async def wait_for_result(self, timeout: float | None = None):
+        event_result, event_cancel = self.events.get(self._job_id)
+        if event_cancel.is_set():
+            raise JobCancelledError(f"Job id ${self._job_id} has been cancelled")
+
+        refreshed_job = await self.job()
+        if refreshed_job["status"] == JobStatus.CANCELLED:
+            raise JobCancelledError(f"Job id ${refreshed_job['_id']} has been cancelled")
+
         event = self.events.get(self._job_id)[0]
         if event is None:
             raise ValueError("Could not find event")
@@ -117,17 +123,13 @@ class JobCommand(CancelDownstreamJobMixin):
         executor = concurrent.futures.ThreadPoolExecutor()
         try:
             async with async_timeout.timeout(timeout):
-                await asyncio.get_running_loop().run_in_executor(executor, event.wait) #to_thread(event.wait)
+                await asyncio.get_running_loop().run_in_executor(executor, event.wait)
         except asyncio.TimeoutError:
             return None
         finally:
             executor.shutdown()
 
         refreshed_job = await self.job()
-        if refreshed_job["status"] == JobStatus.CANCELLED:
-            raise JobCancelledError(f"Job id ${refreshed_job['_id']} has been cancelled")
-
-        assert refreshed_job is not None, "Job not found !"
         if (result := refreshed_job.get("result")) is None:
             return None
         self._result = loads(result)

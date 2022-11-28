@@ -11,7 +11,6 @@ from loguru import logger
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from mq._runner import RunnerProtocol
-from mq.utils import wait_for_event_cleared
 
 
 class NoDaemonProcess(multiprocessing.Process):
@@ -119,7 +118,6 @@ class Worker:
 
     async def terminate(self):
         self.worker_stop_event.set()
-        await wait_for_event_cleared(self.worker_stop_event, 10)
         await self._q.find_one_and_update(
             dict(worker_id=self.worker_id),
             {
