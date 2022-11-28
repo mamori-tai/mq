@@ -1,5 +1,5 @@
 site_name: mq
-repo_url: https://github.com/mamori-tai/smart-on-fhir-client
+repo_url: https://github.com/mamori-tai/mq
 repo_name: smart-on-fhir-client
 theme:
   features:
