@@ -36,6 +36,9 @@ class DeleteJobError(Exception):
 
 
 class JobCommand(CancelDownstreamJobMixin):
+    """
+    Provides simple command to interact with enqueued job
+    """
     def __init__(
         self,
         job_id: str,
@@ -60,6 +63,11 @@ class JobCommand(CancelDownstreamJobMixin):
         return job_as_dict
 
     async def delete(self) -> DeleteResult | typing.NoReturn:
+        """
+        Allow deleting the job and associated events in shared memory
+        Returns:
+
+        """
         job = await self.job(as_job=True)
         if job.status not in {JobStatus.CANCELLED, JobStatus.CANCELLED, JobStatus.FINISHED}:
             raise DeleteJobError(f"Job id {job.id} in status {job.status}")
@@ -69,10 +77,27 @@ class JobCommand(CancelDownstreamJobMixin):
         # delete from database
         return await self.q.delete_one({"_id": job.id})
 
-    def command_for(self, downstream_id: str):
+    def command_for(self, downstream_id: str) -> "JobCommand":
+        """
+        Returns a JobCommand for a downstream job to perform operations
+        on it
+        Args:
+            downstream_id: str the id of the downstream job
+
+        Returns:
+            JobCommand
+        """
         return JobCommand(downstream_id, self.q, self.events)
 
     async def leaves(self, leaves=None):
+        """
+        return all leaves i.e. job id of a Directed Acyclic Graph
+        Args:
+            leaves: None (used in recursive manner)
+
+        Returns:
+            list[str] all job_id of job leaves
+        """
         if leaves is None:
             leaves = []
         job_as_dict = await self.job(as_job=True)
@@ -86,8 +111,9 @@ class JobCommand(CancelDownstreamJobMixin):
 
     async def cancel(self) -> bool:
         """
+        Try to cancel a job even if ti is running
         Returns:
-
+            bool cancelling success
         """
         doc = await self.q.find_one_and_update(
             {"_id": self._job_id, "status": {"$in": [JobStatus.WAITING, JobStatus.WAITING_FOR_UPSTREAM]}},
@@ -107,7 +133,15 @@ class JobCommand(CancelDownstreamJobMixin):
         await self.cancel_downstream(computed_downstream=(await self.job())["computed_downstream"])
         return (await self.job())["status"] == JobStatus.CANCELLED
 
-    async def wait_for_result(self, timeout: float | None = None):
+    async def wait_for_result(self, timeout: float | None = None) -> Any:
+        """
+        wait for the result of the job
+        Args:
+            timeout: float time to wait after returning. If None wait forever
+
+        Returns:
+            result: Any the result of the job
+        """
         event_result, event_cancel = self.events.get(self._job_id)
         if event_cancel.is_set():
             raise JobCancelledError(f"Job id ${self._job_id} has been cancelled")
@@ -143,11 +177,22 @@ class JobCommand(CancelDownstreamJobMixin):
             return cb(None)
 
     def add_done_callback(self, cb: Callable | Coroutine):
+        """
+        Add a callback when a job is done (even if it failed)
+        Args:
+            cb: Callable | Coroutine
+
+        Returns:
+            None
+        """
         task = asyncio.get_running_loop().create_task(self.wait_for_result())
         task.add_done_callback(lambda t: self._done_cb(t, cb))
 
 
 class JobQueue(EnqueueMixin):
+    """
+    Job queue class which enqueues some jobs
+    """
     def __init__(
         self,
         *,
@@ -169,6 +214,12 @@ class JobQueue(EnqueueMixin):
 
     @property
     def connection_parameters(self):
+        """
+
+        Returns:
+            MongoDBConnectionParameters
+
+        """
         return self._mongodb_connection
 
     async def _create(self):
@@ -188,6 +239,16 @@ class JobQueue(EnqueueMixin):
     async def enqueue(
         self, f: Callable[..., Any] | Coroutine | None, *args: Any, **kwargs: Any
     ) -> JobCommand:
+        """
+        Enqueue a function in mongo
+        Args:
+            f:
+            *args:
+            **kwargs:
+
+        Returns:
+            JobCommand instance
+        """
         events = self._shared_memory.events()
         job = await self.enqueue_job(
             job_id=None,

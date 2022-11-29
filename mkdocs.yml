@@ -40,7 +40,9 @@ nav:
   - enqueuing.md
   - dequeuing.md
   - api:
-      - api/index.md
+      - api/mq.md
+      - api/job-command.md
+      - api/job-queue.md
 
 plugins:
   - search

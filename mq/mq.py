@@ -36,9 +36,11 @@ class P:
         self.mq_server_close_event = threading.Event()
 
     def events(self):
+        """return all shared memory events"""
         return self._events_by_job_id
 
     def close(self):
+        """ close the shared memory manager"""
         logger.debug("Closing shared memory P manager...")
         self.manager.shutdown()
 
@@ -77,6 +79,14 @@ class MQ:
     task_runner_by_channel: dict[str, TaskRunnerProtocol | Callable[[Job], Any]] = {}
 
     def with_process_connection(self, mq_server_params: MQManagerConnectionParameters):
+        """
+        Server connection parameters when starting a server or in a worker process
+        Args:
+            mq_server_params:
+
+        Returns:
+
+        """
         self.mq_server_params = mq_server_params
         current_process().authkey = mq_server_params.authkey
         return self
@@ -112,6 +122,17 @@ class MQ:
         in_worker_process: bool = False,
         scheduler: SchedulerProtocol = DefaultScheduler(),
     ):
+        """
+        Mq initialization method
+        Args:
+            mongodb_connection_params: MongoDBConnectionParams
+            start_server: bool true if we need to start a server process in order to start a worker in another process
+            in_worker_process: bool true if worker is launched in another process
+            scheduler: SchedulerProtocol Scheduler instance implementation
+
+        Returns:
+
+        """
         self.mongodb_connection_params = mongodb_connection_params
         self.scheduler = scheduler
         self.shared_memory = P()
@@ -138,7 +159,7 @@ class MQ:
 
     async def enqueue(self, f=None, *args, **kwargs):
         """
-        direct enqueuing
+        direct enqueuing of a function
         Args:
             f:
             *args:
@@ -156,6 +177,11 @@ class MQ:
 
     @property
     def events(self):
+        """
+        Get all shared events
+        Returns:
+
+        """
         if self.is_in_worker_process:
             # noinspection PyUnresolvedReferences
             return self.client_manager.events()
@@ -199,6 +225,18 @@ class MQ:
         dequeuing_delay: int = 3,
         task_runner=None,
     ) -> Worker:
+        """
+        Create a new default worker with a default task runner
+        Args:
+            channel: str the channel to publish the job
+            nb_processes: int the number of workers
+            max_concurrency: int the number of workers which work concurrently
+            dequeuing_delay: int time to wait before dequeuing a new job
+            task_runner: callable the function to execute a job
+
+        Returns:
+            Worker instance
+        """
         worker_id = str(uuid.uuid4())
         worker = self.gen_new_worker(worker_id=worker_id, nb_processes=nb_processes)
         worker._runner = DefaultRunner(
@@ -214,6 +252,15 @@ class MQ:
         return worker
 
     def worker_with_runner(self, *, runner: RunnerProtocol, nb_processes: int = 1):
+        """
+        Create a new worker with a special task runner implementation
+        Args:
+            runner: TaskRunnerProtocol the runner implementation see DefaultTaskRunner
+            nb_processes: int nb of processes
+
+        Returns:
+            Worker instance
+        """
         # ensure init has been called
         assert self.scheduler is not None
         if runner.scheduler is not None:
@@ -226,7 +273,15 @@ class MQ:
 
         return self.gen_new_worker(None, runner, nb_processes)
 
-    def register_worker(self, worker: Worker):
+    def register_worker(self, worker: Worker) -> None:
+        """
+        Register a new worker
+        Args:
+            worker: Worker a created worker
+
+        Returns:
+            None
+        """
         self.workers[worker.worker_id] = worker
 
 
@@ -250,8 +305,9 @@ class mongodb_connection_parameters:
 
 # noinspection PyPep8Naming
 class job:
-    """ """
-
+    """
+    Decorator allowing to define job
+    """
     def __init__(
         self,
         *,
@@ -290,6 +346,9 @@ class job:
 
 # noinspection PyPep8Naming
 class register_task_runner:
+    """
+    Register a function to dequeue messages from a channel
+    """
     def __init__(self, *, channel: str):
         self._channel = channel
 
