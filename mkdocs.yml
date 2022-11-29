@@ -4,6 +4,11 @@ repo_name: mq
 theme:
   features:
     - content.code.annotate
+    - content.tabs.link
+    - navigation.expand
+    - navigation.indexes
+    - toc.integrate
+
   name: material
   palette:
     - scheme: default
@@ -21,3 +26,22 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.critic
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  - admonition
+  - pymdownx.details
+nav:
+  - Tutorial: index.md
+  - enqueuing.md
+  - dequeuing.md
+  - api:
+      - api/index.md
+
+plugins:
+  - search
+  - mkdocstrings
