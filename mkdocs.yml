@@ -1,6 +1,6 @@
 site_name: mq
 repo_url: https://github.com/mamori-tai/mq
-repo_name: smart-on-fhir-client
+repo_name: mq
 theme:
   features:
     - content.code.annotate
