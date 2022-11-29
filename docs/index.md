@@ -1,4 +1,4 @@
-# Welcome to mq docs !
+# Home
 
 mq is a *publish/subscribe* (or queueing system) mechanism based on `mongodb`. It allows to launch small tasks
 in an asynchronous way. Several tools exist but using other datastore such as *Redis* (rq, ...) so if you already use
@@ -8,15 +8,17 @@ mq is a hobby project mainly to learn *asyncio* module, and multiprocessing cond
 
 ## Getting started 🚀
 
-```shell
-pip install mq
-```
+=== "pip"
 
-or with poetry:
+    ```bash
+    pip install mq
+    ```
 
-```shell
-poetry add mq
-```
+=== "poetry"
+
+    ```bash
+    poetry add mq
+    ```
 
 ## How it works ⁉
 

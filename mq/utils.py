@@ -65,6 +65,9 @@ FunctionList = list[Callable[..., Any] | Coroutine | None] | None
 
 
 class EnqueueMixin(abc.ABC):
+    """
+
+    """
     async def enqueue_downstream(
         self,
         downstream: FunctionList = None,
