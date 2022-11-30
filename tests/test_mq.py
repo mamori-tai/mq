@@ -13,15 +13,22 @@ from mq.utils import MongoDBConnectionParameters
 from tests.jobs import downstream2, job_test
 
 
-@pytest.fixture
+@pytest.fixture(scope="package", autouse=True)
+def event_loop():
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture(scope="package")
 def q():
     client = AsyncIOMotorClient("mongodb://localhost:27017")
     return client["mq"]["mq"]
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def run_around(q):
-    await q.drop()
+async def run_around():
+    logger.debug("init MQ")
     await mq.init(MongoDBConnectionParameters())
 
     worker = mq.default_worker(channel="test")
@@ -31,15 +38,14 @@ async def run_around(q):
     yield
 
     logger.debug("setting down worker...")
-    worker.worker_stop_event.set()
     await asyncio.sleep(1)
-    worker.parent_manager.shutdown()
-    worker._process_executor.terminate()
-    await asyncio.sleep(1)
+    await worker.terminate()
 
 
 @pytest.mark.asyncio
 async def test_enqueue(q):
+    await q.drop()
+
     command = await downstream2.mq(1)
     assert_that(await q.count_documents({})).is_equal_to(1)
 
@@ -66,6 +72,8 @@ async def test_enqueue(q):
 
 @pytest.mark.asyncio
 async def test_wait_for_result(q):
+    await q.drop()
+
     command: JobCommand = await downstream2.mq(1)
     logger.debug(await command.wait_for_result())
     # assert_that(await command.wait_for_result()).is_equal_to(2)
@@ -73,13 +81,18 @@ async def test_wait_for_result(q):
 
 @pytest.mark.asyncio
 async def test_cancel(q):
+    await q.drop()
+
     command: JobCommand = await downstream2.mq(1)
-    await command.cancel()
+    logger.debug(await command.cancel())
+    logger.debug((await command.job())["status"])
     assert_that((await command.job())["status"]).is_equal_to(JobStatus.CANCELLED)
 
 
 @pytest.mark.asyncio
 async def test_delete(q):
+    await q.drop()
+
     command: JobCommand = await downstream2.mq(1)
     await command.cancel()
     await command.delete()
@@ -92,6 +105,8 @@ async def test_delete(q):
 
 @pytest.mark.asyncio
 async def test_downstream(q):
+    await q.drop()
+
     command: JobCommand = await job_test.mq(1, 2)
     assert_that(await q.count_documents({})).is_equal_to(3)
     docs = await q.find({"_id": {"$nin": [command.job_id]}}).to_list(length=100)
@@ -102,6 +117,8 @@ async def test_downstream(q):
 
 @pytest.mark.asyncio
 async def test_downstream_cancel(q):
+    await q.drop()
+
     command: JobCommand = await job_test.mq(1, 2)
     await command.cancel()
     docs = await q.find({"_id": {"$nin": [command.job_id]}}).to_list(length=100)
