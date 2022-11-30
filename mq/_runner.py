@@ -1,10 +1,8 @@
 import asyncio
 import dataclasses
-import multiprocessing
 import threading
 import typing
 from asyncio import CancelledError
-from multiprocessing.managers import SyncManager
 
 from loguru import logger
 
@@ -40,8 +38,12 @@ class DefaultTaskRunner:
         f, args, kwargs = loads(current_job.f)
         retry = current_job.extra.get("retry")
         if retry is not None:
-            retry = {k: v for k, v in {k: loads(v) for k, v in retry.items()}.items() if v is not None}
-        if retry is not None:
+            retry = {
+                k: v
+                for k, v in {k: loads(v) for k, v in retry.items()}.items()
+                if v is not None
+            }
+        if retry:
             async for attempt in AsyncRetrying(**retry):
                 logger.debug("retrying...")
                 with attempt:
@@ -102,7 +104,6 @@ class DefaultRunner(EnqueueMixin):
         self._max_concurrency = max_concurrency
 
         self._semaphore = asyncio.Semaphore(self._max_concurrency)
-        self.manager: SyncManager | None = None
         self._tasks = set()
 
     @staticmethod
@@ -132,7 +133,6 @@ class DefaultRunner(EnqueueMixin):
         )
 
     async def cancel_downstream(self, computed_downstream: dict[str, typing.Any]):
-        "should be a mixin to be provided by job command"
         for job_id, child in computed_downstream.items():
             self.q.find_one_and_update(
                 {"_id": job_id}, {"$set": {"status": JobStatus.CANCELLED}}
@@ -253,11 +253,11 @@ class DefaultRunner(EnqueueMixin):
                 job_as_dict = await cursor.next()
                 current_job = Job(**job_as_dict)
 
-                logger.debug("Treating row {}", current_job._id)
+                logger.debug("Treating row {}", current_job.id)
                 current_job.locked_by = self._worker_id
                 # updating directly avoid resending a new job
                 await self.q.find_one_and_update(
-                    {"_id": current_job._id},
+                    {"_id": current_job.id},
                     {
                         "$set": {
                             "status": JobStatus.PENDING,
@@ -270,12 +270,10 @@ class DefaultRunner(EnqueueMixin):
                 pass
             except CancelledError:
                 logger.debug("Runner cancelled")
-                worker_stop_event.clear()
                 raise
             except Exception as e:
                 logger.debug("Unknown error, runner cancelled")
                 logger.exception(e)
-                worker_stop_event.clear()
                 raise
 
     async def post_init(self) -> None:
@@ -289,8 +287,6 @@ class DefaultRunner(EnqueueMixin):
         self.q = db[self._mongodb_connection_params.collection]
         self._wq = db[self._worker_queue]
 
-        self.manager = multiprocessing.Manager()
-
     async def dequeue(self) -> None:
         """
         Dequeuing job and start task on it
@@ -299,11 +295,6 @@ class DefaultRunner(EnqueueMixin):
         """
         tasks = set()
         await self.post_init()
-        try:
-            async for current_job in self._dequeue():
-                task = asyncio.create_task(self._task_for_job(current_job))
-                task.add_done_callback(tasks.discard)
-        finally:
-            logger.debug("Shutting down manager")
-            self.manager.shutdown()
-            self.manager = None
+        async for current_job in self._dequeue():
+            task = asyncio.create_task(self._task_for_job(current_job))
+            task.add_done_callback(tasks.discard)

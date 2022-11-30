@@ -40,7 +40,7 @@ class P:
         return self._events_by_job_id
 
     def close(self):
-        """ close the shared memory manager"""
+        """close the shared memory manager"""
         logger.debug("Closing shared memory P manager...")
         self.manager.shutdown()
 
@@ -259,7 +259,7 @@ class MQ:
             nb_processes: int nb of processes
 
         Returns:
-            Worker instance
+            Worker instance of the built worker
         """
         # ensure init has been called
         assert self.scheduler is not None
@@ -308,6 +308,7 @@ class job:
     """
     Decorator allowing to define job
     """
+
     def __init__(
         self,
         *,
@@ -317,7 +318,7 @@ class job:
         # supporting only these attributes
         stop=None,
         wait=None,
-        retry=None
+        retry=None,
     ):
         self._channel = channel
         self._schedule = schedule
@@ -349,6 +350,7 @@ class register_task_runner:
     """
     Register a function to dequeue messages from a channel
     """
+
     def __init__(self, *, channel: str):
         self._channel = channel
 

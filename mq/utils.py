@@ -1,18 +1,13 @@
 import abc
-import asyncio
-import concurrent.futures
 import dataclasses
-import multiprocessing
 import pickle
 import threading
-import time
 import typing
 import uuid
 from functools import partial
 from multiprocessing.managers import SyncManager
 from typing import Any, Callable, Coroutine, Protocol
 
-import async_timeout
 import dill
 from motor.motor_asyncio import AsyncIOMotorCollection
 
@@ -26,9 +21,9 @@ if typing.TYPE_CHECKING:
 class MongoDBConnectionParameters:
     """ """
 
-    mongo_uri: str
-    db_name: str
-    collection: str
+    mongo_uri: str = "mongodb://localhost:27017"
+    db_name: str = "mq"
+    collection: str = "mq"
 
 
 @dataclasses.dataclass
@@ -65,9 +60,8 @@ FunctionList = list[Callable[..., Any] | Coroutine | None] | None
 
 
 class EnqueueMixin(abc.ABC):
-    """
+    """ """
 
-    """
     async def enqueue_downstream(
         self,
         downstream: FunctionList = None,
@@ -80,7 +74,12 @@ class EnqueueMixin(abc.ABC):
             f_id = str(uuid.uuid4())
             job_ids[f_id] = {}
             await self.enqueue_job(
-                job_id=f_id, status=JobStatus.WAITING_FOR_UPSTREAM, downstream_job=job_ids[f_id], events=events, manager=manager, f=(f, (), {})
+                job_id=f_id,
+                status=JobStatus.WAITING_FOR_UPSTREAM,
+                downstream_job=job_ids[f_id],
+                events=events,
+                manager=manager,
+                f=(f, (), {}),
             )
         return job_ids
 
@@ -119,7 +118,7 @@ class EnqueueMixin(abc.ABC):
         retry_policy = {
             "stop": getattr(fn, "_stop", None),
             "retry": getattr(fn, "_retry", None),
-            "wait": getattr(fn, "_wait", None)
+            "wait": getattr(fn, "_wait", None),
         }
         self.scheduler.on_enqueue_job(job, schedule_policy, retry_policy)
         await self.q.insert_one(dataclasses.asdict(job))

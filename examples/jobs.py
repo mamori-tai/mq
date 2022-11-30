@@ -1,4 +1,5 @@
 import asyncio
+import random
 
 from tenacity import stop_after_attempt
 
@@ -15,12 +16,7 @@ async def downstream(a):
     return a + 1
 
 
-@job(
-    channel="test",
-    downstream=[downstream]
-    # schedule=every(10).seconds,
-    # retry=stop_after_delay(1) | stop_after_attempt(3),
-)
+@job(channel="test", downstream=[downstream])
 async def job_test(a, b):
     await asyncio.sleep(0.1)
     return a + b
@@ -28,14 +24,15 @@ async def job_test(a, b):
 
 @job(
     channel="test",
-    # schedule=every(10).seconds,
     stop=stop_after_attempt(3),
 )
 async def test_retry(a, b):
     await asyncio.sleep(0.1)
-    raise ValueError("")
+    if random.randint() > 50:
+        raise ValueError("")
+    return a + b
 
 
 @job(channel="test")
 async def test_exception():
-    raise ValueError("HOOO")
+    raise ValueError("Direct Exception")

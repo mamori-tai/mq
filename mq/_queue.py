@@ -17,10 +17,10 @@ from pymongo.results import DeleteResult
 from mq._job import Job, JobStatus
 from mq._scheduler import SchedulerProtocol
 from mq.utils import (
+    CancelDownstreamJobMixin,
     EnqueueMixin,
     MongoDBConnectionParameters,
     loads,
-    CancelDownstreamJobMixin,
 )
 
 if typing.TYPE_CHECKING:
@@ -39,6 +39,7 @@ class JobCommand(CancelDownstreamJobMixin):
     """
     Provides simple command to interact with enqueued job
     """
+
     def __init__(
         self,
         job_id: str,
@@ -69,7 +70,11 @@ class JobCommand(CancelDownstreamJobMixin):
 
         """
         job = await self.job(as_job=True)
-        if job.status not in {JobStatus.CANCELLED, JobStatus.CANCELLED, JobStatus.FINISHED}:
+        if job.status not in {
+            JobStatus.CANCELLED,
+            JobStatus.CANCELLED,
+            JobStatus.FINISHED,
+        }:
             raise DeleteJobError(f"Job id {job.id} in status {job.status}")
         # delete from all events
         del self.events[job.id]
@@ -116,7 +121,10 @@ class JobCommand(CancelDownstreamJobMixin):
             bool cancelling success
         """
         doc = await self.q.find_one_and_update(
-            {"_id": self._job_id, "status": {"$in": [JobStatus.WAITING, JobStatus.WAITING_FOR_UPSTREAM]}},
+            {
+                "_id": self._job_id,
+                "status": {"$in": [JobStatus.WAITING, JobStatus.WAITING_FOR_UPSTREAM]},
+            },
             {"$set": {"status": JobStatus.CANCELLED}},
         )
         if doc is not None:
@@ -130,7 +138,9 @@ class JobCommand(CancelDownstreamJobMixin):
 
         ev.set()
         logger.debug("Cancelling downstream job...")
-        await self.cancel_downstream(computed_downstream=(await self.job())["computed_downstream"])
+        await self.cancel_downstream(
+            computed_downstream=(await self.job())["computed_downstream"]
+        )
         return (await self.job())["status"] == JobStatus.CANCELLED
 
     async def wait_for_result(self, timeout: float | None = None) -> Any:
@@ -148,7 +158,9 @@ class JobCommand(CancelDownstreamJobMixin):
 
         refreshed_job = await self.job()
         if refreshed_job["status"] == JobStatus.CANCELLED:
-            raise JobCancelledError(f"Job id ${refreshed_job['_id']} has been cancelled")
+            raise JobCancelledError(
+                f"Job id ${refreshed_job['_id']} has been cancelled"
+            )
 
         event = self.events.get(self._job_id)[0]
         if event is None:
@@ -193,6 +205,7 @@ class JobQueue(EnqueueMixin):
     """
     Job queue class which enqueues some jobs
     """
+
     def __init__(
         self,
         *,
@@ -256,7 +269,7 @@ class JobQueue(EnqueueMixin):
             downstream_job={},
             events=events,
             manager=self._shared_memory.manager,
-            f=(f, args, kwargs)
+            f=(f, args, kwargs),
         )
         # returning the job command
         # noinspection PyProtectedMember
