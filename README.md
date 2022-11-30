@@ -1,4 +1,5 @@
 # mq
+[![test](https://github.com/mamori-tai/mq/actions/workflows/python-test.yml/badge.svg)](https://github.com/mamori-tai/mq/actions/workflows/python-test.yml)
 
 *Simplest async **job queue** using mongo db in python*
 
