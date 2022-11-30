@@ -1,0 +1,16 @@
+repos:
+-   repo: https://github.com/pre-commit/mirrors-isort
+    rev: v5.10.1
+    hooks:
+    - id: isort
+      entry: bash -c 'isort --profile black "$@"; git add -u' --
+-   repo: https://github.com/ambv/black
+    rev: 22.10.0
+    hooks:
+    - id: black
+      language_version: python3.10
+      entry: bash -c 'black "$@"; git add -u' --
+-   repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.0.116
+    hooks:
+      - id: ruff

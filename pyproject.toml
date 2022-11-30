@@ -1,13 +1,12 @@
 [tool.poetry]
 name = "mongo-queue"
 version = "0.1.0"
-description = ""
+description = "MongoDB job queue in an asynchronous way"
 authors = ["Marc <marc@synapse-medicine.com>"]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
 motor = "^3.1.1"
-pydantic = "^1.10.2"
 loguru = "^0.6.0"
 dill = "^0.3.5"
 schedule = "^1.1.0"
@@ -17,12 +16,24 @@ tenacity = "^8.1.0"
 [tool.poetry.dev-dependencies]
 black = "^22.10.0"
 aiohttp = "^3.8.3"
-mkdocs-material = "^8.5.7"
-ruff = "^0.0.135"
+ruff = "^0.0.149"
 isort = "^5.10.1"
-mkdocs-material = "^8.5.10"
+
+[tool.poetry.group.doc.dependencies]
+mkdocs-material = "^8.5.11"
 mkdocstrings = "^0.19.0"
 mkdocstrings-python = "^0.8.2"
+
+
+[tool.poetry.group.test.dependencies]
+pytest = "^7.2.0"
+pytest-cov = "^4.0.0"
+pytest-asyncio = "^0.20.2"
+pytest-mock = "^3.10.0"
+
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^2.20.0"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
