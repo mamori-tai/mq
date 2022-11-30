@@ -64,3 +64,4 @@ jobs:
           source .venv/bin/activate
           pytest --capture=tee-sys
           pytest --cov .
+          coverage report --omit=tests/*,examples/*
