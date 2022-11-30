@@ -72,7 +72,7 @@ class JobCommand(CancelDownstreamJobMixin):
         job = await self.job(as_job=True)
         if job.status not in {
             JobStatus.CANCELLED,
-            JobStatus.CANCELLED,
+            JobStatus.ON_ERROR,
             JobStatus.FINISHED,
         }:
             raise DeleteJobError(f"Job id {job.id} in status {job.status}")

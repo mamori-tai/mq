@@ -128,7 +128,6 @@ class EnqueueMixin(abc.ABC):
 
 class CancelDownstreamJobMixin(QueueAwareProtocol, EventsAwareProtocol, Protocol):
     async def cancel_downstream(self, computed_downstream: dict[str, typing.Any]):
-        "should be a mixin to be provided by job command"
         for job_id, child in computed_downstream.items():
             self.q.find_one_and_update(
                 {"_id": job_id}, {"$set": {"status": JobStatus.CANCELLED}}

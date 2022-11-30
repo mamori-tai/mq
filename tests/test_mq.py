@@ -5,8 +5,10 @@ from loguru import logger
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from mq import mq
+from mq._job import JobStatus
+from mq._queue import DeleteJobError, JobCommand
 from mq.utils import MongoDBConnectionParameters
-from tests.jobs import downstream2
+from tests.jobs import downstream2, job_test
 
 
 @pytest.fixture
@@ -55,3 +57,48 @@ async def test_enqueue(q):
             },
         }
     ).is_subset_of(await command.job())
+
+
+@pytest.mark.asyncio
+async def test_wait_for_result(q):
+    command: JobCommand = await downstream2.mq(1)
+    assert_that(await command.wait_for_result()).is_equal_to(2)
+
+
+@pytest.mark.asyncio
+async def test_cancel(q):
+    command: JobCommand = await downstream2.mq(1)
+    await command.cancel()
+    assert_that((await command.job())["status"]).is_equal_to(JobStatus.CANCELLED)
+
+
+@pytest.mark.asyncio
+async def test_delete(q):
+    command: JobCommand = await downstream2.mq(1)
+    await command.cancel()
+    await command.delete()
+    assert_that(await q.count_documents({})).is_equal_to(0)
+
+    command: JobCommand = await downstream2.mq(1)
+    with pytest.raises(DeleteJobError):
+        await command.delete()
+
+
+@pytest.mark.asyncio
+async def test_downstream(q):
+    command: JobCommand = await job_test.mq(1, 2)
+    assert_that(await q.count_documents({})).is_equal_to(3)
+    docs = await q.find({"_id": {"$nin": [command.job_id]}}).to_list(length=100)
+    status = {d["status"] for d in docs}
+    assert_that(status).is_length(1)
+    assert_that({JobStatus.WAITING_FOR_UPSTREAM}).is_subset_of(status)
+
+
+@pytest.mark.asyncio
+async def test_downstream_cancel(q):
+    command: JobCommand = await job_test.mq(1, 2)
+    await command.cancel()
+    docs = await q.find({"_id": {"$nin": [command.job_id]}}).to_list(length=100)
+    status = {d["status"] for d in docs}
+    assert_that(status).is_length(1)
+    assert_that({JobStatus.CANCELLED}).is_subset_of(status)
