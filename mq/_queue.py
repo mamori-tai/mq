@@ -166,7 +166,7 @@ class JobCommand(CancelDownstreamJobMixin):
         if event is None:
             raise ValueError("Could not find event")
 
-        executor = concurrent.futures.ThreadPoolExecutor()
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
             async with async_timeout.timeout(timeout):
                 await asyncio.get_running_loop().run_in_executor(executor, event.wait)
