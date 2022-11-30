@@ -62,5 +62,4 @@ jobs:
       - name: Run tests
         run: |
           source .venv/bin/activate
-          coverage run --omit=tests/*,examples/* -m pytest --capture=tee-sys
-          coverage report
+          pytest --capture=tee-sys
