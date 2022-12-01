@@ -1,4 +1,6 @@
 # Welcome to mq project !
+[![test](https://github.com/mamori-tai/mq/actions/workflows/python-test.yml/badge.svg)](https://github.com/mamori-tai/mq/actions/workflows/python-test.yml)
+![](https://github.com/mamori-tai/mq/blob/main/coverage.svg)
 
 **mq** is a *publish/subscribe* (or queueing system) mechanism based on `mongodb`. It allows to launch small tasks
 in an asynchronous way. Several tools exist but using other datastore such as *Redis* (rq, ...) so if you already use
