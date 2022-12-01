@@ -13,20 +13,20 @@ from mq.utils import MongoDBConnectionParameters
 from tests.jobs import downstream2, job_test
 
 
-@pytest.fixture(scope="package", autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
 
 
-@pytest.fixture(scope="package")
+@pytest.fixture(scope="session")
 def q():
     client = AsyncIOMotorClient("mongodb://localhost:27017")
     return client["mq"]["mq"]
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest_asyncio.fixture(scope="session", autouse=True)
 async def run_around():
     logger.debug("init MQ")
     await mq.init(MongoDBConnectionParameters())
