@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from mq import mq
 from mq._job import JobStatus
 from mq._queue import DeleteJobError, JobCommand
+from mq._worker import WorkerType
 from mq.utils import MongoDBConnectionParameters
 from tests.jobs import downstream2, job_test
 
@@ -31,7 +32,7 @@ async def worker(q):
     logger.debug("init MQ")
     await mq.init(MongoDBConnectionParameters())
 
-    worker = mq.default_worker(channel="test")
+    worker = mq.default_worker(channel="test", worker_type=WorkerType.THREAD)
     await worker.start()
     logger.debug("worker started")
 
