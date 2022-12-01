@@ -82,17 +82,17 @@ class Worker:
         self.worker_stop_event = worker_stop_event
         self.parent_manager = parent_manager
         self._worker_type = worker_type
-        self._process_executor = self._pool_factory()
+        self._process_executor = self._pool_factory(nb_processes)
         self._tasks = set()
         self.future: asyncio.Future | None = None
 
-    def _pool_factory(self) -> multiprocessing.pool.Pool:
+    def _pool_factory(self, nb_processes: int) -> multiprocessing.pool.Pool:
         pool_inst = (
             multiprocessing.pool.ThreadPool
             if self._worker_type == WorkerType.THREAD
             else multiprocessing.Pool
         )
-        return pool_inst(processes=self._nb_process)
+        return pool_inst(processes=nb_processes)
 
     async def start(self):
         logger.debug(
@@ -143,8 +143,8 @@ class Worker:
         self.parent_manager.shutdown()
         self._process_executor.terminate()
 
-    async def scale_up(self, up: int):
+    async def scale_up(self, up: int):  # pragma: no cover
         await self.terminate()
         self._nb_process = up
         logger.info("scaling worker {} to {} processes", self.worker_id, up)
-        self._process_executor = multiprocessing.Pool(processes=self._nb_process)
+        self._process_executor = self._pool_factory(processes=up)
