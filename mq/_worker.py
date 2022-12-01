@@ -78,7 +78,7 @@ class Worker:
         self._nb_process = nb_processes
         self.worker_stop_event = worker_stop_event
         self.parent_manager = parent_manager
-        self._process_executor: multiprocessing.Pool = NoDaemonProcessPool(
+        self._process_executor: multiprocessing.Pool = multiprocessing.pool.ThreadPool(
             processes=nb_processes,
         )
         self._tasks = set()
