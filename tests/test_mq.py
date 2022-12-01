@@ -72,14 +72,13 @@ async def test_enqueue(q):
 async def test_wait_for_result(q):
 
     command: JobCommand = await downstream2.mq(1)
-    logger.debug(await command.wait_for_result())
-    # assert_that(await command.wait_for_result()).is_equal_to(2)
+    assert_that(await command.wait_for_result()).is_equal_to(2)
 
 
 @pytest.mark.asyncio
 async def test_cancel(q):
     command: JobCommand = await downstream2.mq(1)
-    logger.debug(await command.cancel())
+    await command.cancel()
 
     assert_that((await command.job())["status"]).is_equal_to(JobStatus.CANCELLED)
 
