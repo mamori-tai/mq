@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
@@ -116,3 +117,18 @@ async def test_downstream_cancel(q):
     status = {d["status"] for d in docs}
     assert_that(status).is_length(1)
     assert_that({JobStatus.CANCELLED}).is_subset_of(status)
+
+
+@pytest.mark.asyncio
+async def test_add_done_callback(q):
+
+    command: JobCommand = await downstream2.mq(1)
+    m = Mock()
+
+    def cb(_):
+        logger.debug("called")
+        m.method()
+
+    command.add_done_callback(cb)
+    await asyncio.sleep(3)
+    m.method.assert_called_once()
