@@ -3,13 +3,13 @@ import random
 
 from loguru import logger
 
+from jobs import test_retry
 from mq import mq
 
 # noinspection PyProtectedMember
 from mq._queue import JobCancelledError
+from mq._worker import WorkerType
 from mq.utils import MongoDBConnectionParameters, MQManagerConnectionParameters
-
-from .jobs import test_retry
 
 
 async def main():
@@ -25,7 +25,7 @@ async def main():
     await mq.job_queue.db.mq_workers.drop()
     assert mq.initialized is True
     logger.info("starting worker...")
-    await mq.default_worker(channel="default").start()
+    await mq.default_worker(channel="default", worker_type=WorkerType.THREAD).start()
     logger.info("Worker started !")
 
     for i in range(1):

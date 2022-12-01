@@ -8,6 +8,7 @@ from mq import job
 
 @job(channel="test")
 async def downstream2(a):
+    await asyncio.sleep(2)
     return a + 1
 
 

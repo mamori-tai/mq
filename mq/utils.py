@@ -1,13 +1,17 @@
 import abc
+import asyncio
 import dataclasses
+import multiprocessing
 import pickle
 import threading
+import time
 import typing
 import uuid
 from functools import partial
 from multiprocessing.managers import SyncManager
 from typing import Any, Callable, Coroutine, Protocol
 
+import async_timeout
 import dill
 from motor.motor_asyncio import AsyncIOMotorCollection
 
@@ -53,6 +57,32 @@ class EnqueueProtocol(QueueAwareProtocol, Protocol):
 
     async def enqueue_downstream(self):
         ...
+
+
+async def wait_for_event_cleared(
+    ev: multiprocessing.Event, timeout: float | None = None
+):
+    """
+    Tried condition a lot
+    Args:
+        ev:
+        timeout:
+    Returns:
+    """
+
+    def _check_ev():
+        while 1:
+            event_is_not_set = not ev.is_set()
+            if event_is_not_set:
+                return True
+            time.sleep(0.1)
+
+    try:
+        async with async_timeout.timeout(timeout):
+            await asyncio.to_thread(_check_ev)
+        return True
+    except asyncio.TimeoutError:
+        return False
 
 
 Function = Callable[..., Any] | Coroutine | None

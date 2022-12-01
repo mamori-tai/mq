@@ -159,6 +159,7 @@ class DefaultRunner(EnqueueMixin):
         async with self._semaphore:
 
             logger.debug("Running job {}", current_job.id)
+            event_result, event_cancel = self.events.get(current_job.id)
 
             try:
                 # if f is defined fallback to default task runner
@@ -199,7 +200,6 @@ class DefaultRunner(EnqueueMixin):
                 self._wq.find_one_and_update(
                     dict(worker_id=self._worker_id), {"$inc": {"nb_tasks": 1}}
                 )
-                event_result = self.events.get(current_job.id)[0]
                 event_result.set()
 
     async def wait(self):
@@ -212,16 +212,11 @@ class DefaultRunner(EnqueueMixin):
 
         task = asyncio.create_task(self._run_task(current_job))
 
-        cancel_task = (
-            asyncio.create_task(asyncio.to_thread(cancel_event.wait))
-            if cancel_event is not None
-            else None
-        )
+        cancel_task = asyncio.create_task(asyncio.to_thread(cancel_event.wait))
 
         def _task_cb(t):
             if not t.cancelled():
-                if cancel_task is not None:
-                    cancel_task.cancel()
+                cancel_task.cancel()
 
         task.add_done_callback(_task_cb)
 
@@ -231,12 +226,8 @@ class DefaultRunner(EnqueueMixin):
                     logger.exception(exc)
                 task.cancel()
 
-        if cancel_task is not None:
-            cancel_task.add_done_callback(_cancel_cb)
+        cancel_task.add_done_callback(_cancel_cb)
 
-        if cancel_task is None:
-            await task
-            return
         await asyncio.wait({task, cancel_task})
         await self.wait()
 

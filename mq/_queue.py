@@ -3,6 +3,7 @@ import concurrent.futures
 import threading
 import typing
 from asyncio import CancelledError
+from functools import partial
 from typing import Any, Callable, Coroutine
 
 import async_timeout
@@ -120,6 +121,9 @@ class JobCommand(CancelDownstreamJobMixin):
         Returns:
             bool cancelling success
         """
+        # retrieving cancel condition
+        ev_result, ev_cancel = self.events.get(self._job_id)
+
         doc = await self.q.find_one_and_update(
             {
                 "_id": self._job_id,
@@ -128,19 +132,19 @@ class JobCommand(CancelDownstreamJobMixin):
             {"$set": {"status": JobStatus.CANCELLED}},
         )
         if doc is not None:
+            ev_cancel.set()
+            logger.debug("Job was cancelled and had not begun")
             logger.debug("Cancelling downstream job...")
             await self.cancel_downstream(computed_downstream=doc["computed_downstream"])
-            return True
+            return (await self.job())["status"] == JobStatus.CANCELLED
 
-        ev = self.events.get(self._job_id)[1]
-        if ev is None:
-            raise ValueError("Could not find event")
-
-        ev.set()
+        ev_cancel.set()
         logger.debug("Cancelling downstream job...")
         await self.cancel_downstream(
             computed_downstream=(await self.job())["computed_downstream"]
         )
+        # waiting to finish
+        await asyncio.to_thread(partial(ev_result.wait, 1))
         return (await self.job())["status"] == JobStatus.CANCELLED
 
     async def wait_for_result(self, timeout: float | None = None) -> Any:

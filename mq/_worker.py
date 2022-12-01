@@ -2,7 +2,7 @@ import asyncio
 import datetime
 import multiprocessing
 import signal
-from enum import IntEnum
+from enum import Enum, IntEnum
 from functools import partial
 
 from loguru import logger
@@ -12,33 +12,30 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from mq._runner import RunnerProtocol
 
-
-class NoDaemonProcess(multiprocessing.Process):
-    # make 'daemon' attribute always return False
-    @property
-    def daemon(self):
-        return False
-
-    @daemon.setter
-    def daemon(self, val):
-        pass
-
-
-class NoDaemonProcessPool(multiprocessing.pool.Pool):
-    def Process(self, *args, **kwds):
-        # noinspection PyUnresolvedReferences
-        proc = super(NoDaemonProcessPool, self).Process(*args, **kwds)
-        proc.__class__ = NoDaemonProcess
-
-        return proc
+# class NoDaemonProcess(multiprocessing.Process):
+#     # make 'daemon' attribute always return False
+#     @property
+#     def daemon(self):
+#         return False
+#
+#     @daemon.setter
+#     def daemon(self, val):
+#         pass
+#
+#
+# class NoDaemonProcessPool(multiprocessing.pool.Pool):
+#     def Process(self, *args, **kwds):
+#         # noinspection PyUnresolvedReferences
+#         proc = super(NoDaemonProcessPool, self).Process(*args, **kwds)
+#         proc.__class__ = NoDaemonProcess
+#
+#         return proc
 
 
 def syncify(coroutine_function):
     """
     Args:
         coroutine_function:
-        *args:
-        **kwargs:
     Returns:
     """
     try:
@@ -59,6 +56,11 @@ class WorkerStatus(IntEnum):
     RUNNING = 1
 
 
+class WorkerType(str, Enum):
+    THREAD = "thread"
+    PROCESS = "process"
+
+
 class Worker:
     collection = "mq_workers"
 
@@ -69,6 +71,7 @@ class Worker:
         db: AsyncIOMotorDatabase,
         nb_processes: int = 1,
         runner: RunnerProtocol,
+        worker_type: WorkerType = WorkerType.THREAD,
         worker_stop_event: multiprocessing.Event,
         parent_manager,
     ):
@@ -78,13 +81,23 @@ class Worker:
         self._nb_process = nb_processes
         self.worker_stop_event = worker_stop_event
         self.parent_manager = parent_manager
-        self._process_executor: multiprocessing.Pool = multiprocessing.pool.ThreadPool(
-            processes=nb_processes,
-        )
+        self._worker_type = worker_type
+        self._process_executor = self._pool_factory()
         self._tasks = set()
         self.future: asyncio.Future | None = None
 
+    def _pool_factory(self) -> multiprocessing.pool.Pool:
+        pool_inst = (
+            multiprocessing.pool.ThreadPool
+            if self._worker_type == WorkerType.THREAD
+            else multiprocessing.Pool
+        )
+        return pool_inst(processes=self._nb_process)
+
     async def start(self):
+        logger.debug(
+            "Starting worker {} with {} handlers", self._worker_type, self._nb_process
+        )
         self._q.insert_one(
             dict(
                 worker_id=self.worker_id,
@@ -130,9 +143,8 @@ class Worker:
         self.parent_manager.shutdown()
         self._process_executor.terminate()
 
-    async def scale_up(self, up: int, max_concurrency: int):
+    async def scale_up(self, up: int):
         await self.terminate()
         self._nb_process = up
-        self._max_concurrency = max_concurrency
         logger.info("scaling worker {} to {} processes", self.worker_id, up)
         self._process_executor = multiprocessing.Pool(processes=self._nb_process)

@@ -15,7 +15,7 @@ from mq._job import Job
 from mq._queue import JobCommand, JobQueue
 from mq._runner import DefaultRunner, RunnerProtocol, TaskRunnerProtocol
 from mq._scheduler import DefaultScheduler, SchedulerProtocol
-from mq._worker import Worker
+from mq._worker import Worker, WorkerType
 from mq.utils import MongoDBConnectionParameters, MQManagerConnectionParameters
 
 
@@ -200,6 +200,7 @@ class MQ:
     def gen_new_worker(
         self,
         worker_id: str = None,
+        worker_type: WorkerType = WorkerType.PROCESS,
         runner: RunnerProtocol = None,
         nb_processes: int = 1,
     ) -> Worker:
@@ -210,6 +211,7 @@ class MQ:
             worker_id=worker_id,
             nb_processes=nb_processes,
             runner=runner,
+            worker_type=worker_type,
             parent_manager=self.shared_memory.manager,
             worker_stop_event=self.events.get(worker_id),
         )
@@ -220,6 +222,7 @@ class MQ:
         self,
         *,
         channel: str = "default",
+        worker_type: WorkerType = WorkerType.PROCESS,
         nb_processes: int = 1,
         max_concurrency: int = 3,
         dequeuing_delay: int = 3,
@@ -238,7 +241,9 @@ class MQ:
             Worker instance
         """
         worker_id = str(uuid.uuid4())
-        worker = self.gen_new_worker(worker_id=worker_id, nb_processes=nb_processes)
+        worker = self.gen_new_worker(
+            worker_id=worker_id, worker_type=worker_type, nb_processes=nb_processes
+        )
         worker._runner = DefaultRunner(
             channel=channel,
             worker_id=worker_id,
@@ -251,7 +256,13 @@ class MQ:
         )
         return worker
 
-    def worker_with_runner(self, *, runner: RunnerProtocol, nb_processes: int = 1):
+    def worker_with_runner(
+        self,
+        *,
+        runner: RunnerProtocol,
+        nb_processes: int = 1,
+        worker_type: WorkerType = WorkerType.THREAD,
+    ):
         """
         Create a new worker with a special task runner implementation
         Args:
@@ -271,7 +282,12 @@ class MQ:
         else:
             runner.scheduler = self.scheduler
 
-        return self.gen_new_worker(None, runner, nb_processes)
+        return self.gen_new_worker(
+            worker_id=None,
+            worker_type=worker_type,
+            runner=runner,
+            nb_processes=nb_processes,
+        )
 
     def register_worker(self, worker: Worker) -> None:
         """
