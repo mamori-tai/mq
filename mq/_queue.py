@@ -123,21 +123,6 @@ class JobCommand(CancelDownstreamJobMixin):
         """
         # retrieving cancel condition
         ev_result, ev_cancel = self.events.get(self._job_id)
-
-        doc = await self.q.find_one_and_update(
-            {
-                "_id": self._job_id,
-                "status": {"$in": [JobStatus.WAITING, JobStatus.WAITING_FOR_UPSTREAM]},
-            },
-            {"$set": {"status": JobStatus.CANCELLED}},
-        )
-        if doc is not None:
-            ev_cancel.set()
-            logger.debug("Job was cancelled and had not begun")
-            logger.debug("Cancelling downstream job...")
-            await self.cancel_downstream(computed_downstream=doc["computed_downstream"])
-            return (await self.job())["status"] == JobStatus.CANCELLED
-
         ev_cancel.set()
         logger.debug("Cancelling downstream job...")
         await self.cancel_downstream(

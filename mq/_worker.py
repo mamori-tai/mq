@@ -12,25 +12,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from mq._runner import RunnerProtocol
 
-# class NoDaemonProcess(multiprocessing.Process):
-#     # make 'daemon' attribute always return False
-#     @property
-#     def daemon(self):
-#         return False
-#
-#     @daemon.setter
-#     def daemon(self, val):
-#         pass
-#
-#
-# class NoDaemonProcessPool(multiprocessing.pool.Pool):
-#     def Process(self, *args, **kwds):
-#         # noinspection PyUnresolvedReferences
-#         proc = super(NoDaemonProcessPool, self).Process(*args, **kwds)
-#         proc.__class__ = NoDaemonProcess
-#
-#         return proc
-
 
 def syncify(coroutine_function):
     """
@@ -85,6 +66,7 @@ class Worker:
         self._process_executor = self._pool_factory(nb_processes)
         self._tasks = set()
         self.future: asyncio.Future | None = None
+        logger.debug(worker_stop_event)
 
     def _pool_factory(self, nb_processes: int) -> multiprocessing.pool.Pool:
         pool_inst = (
@@ -131,6 +113,7 @@ class Worker:
 
     async def terminate(self):
         self.worker_stop_event.set()
+        logger.debug("Worker event stopped requested {}", self.worker_stop_event)
         await self._q.find_one_and_update(
             dict(worker_id=self.worker_id),
             {
@@ -141,7 +124,9 @@ class Worker:
             },
         )
         self.parent_manager.shutdown()
-        self._process_executor.terminate()
+
+        # finally joining
+        self._process_executor.join()
 
     async def scale_up(self, up: int):  # pragma: no cover
         await self.terminate()

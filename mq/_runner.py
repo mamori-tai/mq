@@ -236,7 +236,7 @@ class DefaultRunner(EnqueueMixin):
         while True:
             if worker_stop_event.is_set():
                 logger.debug("worker required to stop")
-                # self._client.close()
+                self._client.close()
                 break
             mongo_query = self.scheduler.mongo_query()
             cursor: AsyncIOMotorCursor = self.q.find(mongo_query)
