@@ -10,17 +10,17 @@ mq is a hobby project mainly to learn *asyncio* module, and multiprocessing cond
 
 ## Getting started 🚀
 
-=== "pip"
+### With pip
 
-    ```bash
-    pip install mq
-    ```
+```bash
+pip install mq
+```
 
-=== "poetry"
+### With poetry
 
-    ```bash
-    poetry add mq
-    ```
+```bash
+poetry add mq
+```
 
 ## How it works ⁉
 
@@ -30,6 +30,7 @@ to **dequeue** these tasks and perform their execution. *mq* support this in sev
 - launch worker process in same script becoming a subprocess of the main process
 - launch worker process in another script.
 - launch worker in a thread for heavy IO tasks.
+- full dequeuing as an **asyncio.Task** (coming)
 
 ## Examples 🎨
 
@@ -132,8 +133,32 @@ Process can also be remote ☁ !
 You can specify _retry_, _schedule_ options, and finally define Directed Acyclic Graph
 of tasks (using the _downstream_  keyword) !
 
-See examples
+### Examples:
+
+```python
+@job(
+    channel="test",
+    stop=stop_after_attempt(3),
+)
+async def test_retry(a, b):
+    await asyncio.sleep(0.1)
+    if random.randint() > 50:
+        raise ValueError("")
+    return a + b
+```
+
+```python
+@job(
+    channel="test",
+    schedule=every(10).seconds,
+)
+async def test_schedule(a, b):
+    await asyncio.sleep(0.1)
+    return a + b
+```
+
+See _examples_  for more complex code !
 
 ## Roadmap
-
+- [ ] write a full asyncio version (all running in the same event loop)
 - [ ] write extensive test suite

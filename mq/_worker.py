@@ -65,8 +65,6 @@ class Worker:
         self._worker_type = worker_type
         self._process_executor = self._pool_factory(nb_processes)
         self._tasks = set()
-        self.future: asyncio.Future | None = None
-        logger.debug(worker_stop_event)
 
     def _pool_factory(self, nb_processes: int) -> multiprocessing.pool.Pool:
         pool_inst = (
@@ -113,7 +111,6 @@ class Worker:
 
     async def terminate(self):
         self.worker_stop_event.set()
-        logger.debug("Worker event stopped requested {}", self.worker_stop_event)
         await self._q.find_one_and_update(
             dict(worker_id=self.worker_id),
             {
